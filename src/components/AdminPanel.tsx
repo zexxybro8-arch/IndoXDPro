@@ -87,8 +87,6 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
     isAdmin,
     adminCheckLoading,
     signInWithAdminCredentials,
-    sendAdminVerificationEmail,
-    refreshAdminSession,
     signOutUser,
     showToast,
   } = useVpn();
@@ -175,7 +173,7 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
       }
     };
 
-    void seedCountriesIfEmpty(user.uid).catch(() => {
+    void seedCountriesIfEmpty(user?.uid ?? 'admin').catch(() => {
       // Handled via Firestore error boundary if unauthorized
     });
 
@@ -329,7 +327,7 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
     setAddingRedeem(true);
     try {
       const roundedBalance = Math.round(parsedBalance * 100) / 100;
-      await createAdminRedeemCode(user.uid, {
+      await createAdminRedeemCode(user?.uid ?? 'admin', {
         code: trimmedCode,
         balance: roundedBalance,
         status: newRedeemStatus,
@@ -375,7 +373,7 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
 
     setAddingIpCode(true);
     try {
-      await createAdminIpCode(user.uid, {
+      await createAdminIpCode(user?.uid ?? 'admin', {
         code: trimmedCode,
         label: newIpCodeLabel.trim(),
         status: newIpCodeStatus,
@@ -430,8 +428,8 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
     );
   }
 
-  // --- Firebase Email/Password Admin ID Login Screen (zero hardcoded passwords) ---
-  if (!user) {
+  // --- Frontend Admin Login Screen (Admin ID: ADMIN or ADMIN551, Password: ADMIN551) ---
+  if (!isAdmin) {
     return (
       <main className="relative flex min-h-[calc(100vh-8rem)] w-full items-center justify-center overflow-hidden px-4 py-12">
         <div
@@ -451,7 +449,7 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
               IndoXDPro Admin
             </h1>
             <p className="mt-1.5 text-sm text-slate-400">
-              Sign in with your authorized Admin ID and password.
+              Enter Admin ID (<code className="font-mono text-violet-300">ADMIN</code> or <code className="font-mono text-violet-300">ADMIN551</code>) and Password (<code className="font-mono text-violet-300">ADMIN551</code>).
             </p>
           </div>
 
@@ -478,7 +476,7 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
                     setAdminIdInput(e.target.value);
                     if (loginError) setLoginError(null);
                   }}
-                  placeholder="Enter Admin ID"
+                  placeholder="ADMIN"
                   className="min-h-[50px] w-full rounded-2xl border border-violet-500/25 bg-[#050409] pl-11 pr-4 font-mono text-sm text-white placeholder:font-sans placeholder:text-slate-500 transition-colors focus:border-violet-400 focus:outline-none focus:ring-2 focus:ring-violet-500/20 disabled:opacity-60"
                 />
               </div>
@@ -506,7 +504,7 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
                     setAdminPasswordInput(e.target.value);
                     if (loginError) setLoginError(null);
                   }}
-                  placeholder="Enter Admin Password"
+                  placeholder="ADMIN551"
                   className="min-h-[50px] w-full rounded-2xl border border-violet-500/25 bg-[#050409] pl-11 pr-12 text-sm text-white placeholder:text-slate-500 transition-colors focus:border-violet-400 focus:outline-none focus:ring-2 focus:ring-violet-500/20 disabled:opacity-60"
                 />
                 <button
@@ -566,148 +564,6 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
     );
   }
 
-  // --- Signed In With Email/Password But Email Not Verified Yet ---
-  if (!user.emailVerified) {
-    return (
-      <main className="relative flex min-h-[calc(100vh-8rem)] w-full items-center justify-center overflow-hidden px-4 py-12">
-        <section
-          aria-label="Administrator Email Verification Required"
-          className="relative w-full max-w-[460px] rounded-3xl border border-violet-500/25 bg-[#0A0812]/95 p-6 text-center shadow-[0_24px_80px_rgba(0,0,0,0.85)] sm:p-8"
-        >
-          <div className="mx-auto mb-3.5 flex h-12 w-12 items-center justify-center rounded-2xl border border-violet-500/35 bg-violet-500/15 text-violet-300">
-            <MailCheck className="h-6 w-6" aria-hidden="true" />
-          </div>
-          <h1 className="font-display text-xl font-bold text-white">
-            Verify Administrator Email
-          </h1>
-          <p className="mt-2 text-sm text-slate-400">
-            Firestore Security Rules require a verified email before unlocking administrator
-            operations.
-          </p>
-
-          <div className="mt-4 rounded-xl border border-white/[0.08] bg-[#050409] p-3.5 text-left text-xs">
-            <div className="flex items-center justify-between gap-2 text-slate-400">
-              <span>Account</span>
-              <span className="font-mono text-slate-200">{user.email ?? 'Unknown'}</span>
-            </div>
-          </div>
-
-          <div className="mt-5 space-y-2.5">
-            <button
-              type="button"
-              disabled={sendingVerification}
-              onClick={async () => {
-                setSendingVerification(true);
-                try {
-                  await sendAdminVerificationEmail();
-                } finally {
-                  setSendingVerification(false);
-                }
-              }}
-              className="btn-purple-glow flex min-h-[44px] w-full items-center justify-center gap-2 rounded-xl px-4 text-sm font-semibold text-white disabled:opacity-60"
-            >
-              {sendingVerification ? (
-                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-              ) : (
-                <MailCheck className="h-4 w-4" aria-hidden="true" />
-              )}
-              <span>Send Verification Email</span>
-            </button>
-
-            <button
-              type="button"
-              disabled={refreshingSession}
-              onClick={async () => {
-                setRefreshingSession(true);
-                try {
-                  await refreshAdminSession();
-                } finally {
-                  setRefreshingSession(false);
-                }
-              }}
-              className="flex min-h-[42px] w-full items-center justify-center gap-2 rounded-xl border border-violet-500/25 bg-violet-500/10 px-4 text-sm font-medium text-violet-200 hover:bg-violet-500/20 disabled:opacity-60"
-            >
-              {refreshingSession ? (
-                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-              ) : (
-                <RefreshCw className="h-4 w-4" aria-hidden="true" />
-              )}
-              <span>I&apos;ve Verified — Refresh Status</span>
-            </button>
-          </div>
-
-          <div className="mt-4 flex flex-col gap-2.5 sm:flex-row">
-            <button
-              type="button"
-              onClick={() => void handleLogout()}
-              className="inline-flex min-h-[40px] flex-1 items-center justify-center gap-2 rounded-xl border border-rose-500/25 bg-rose-500/10 px-4 text-xs font-medium text-rose-200 hover:bg-rose-500/20"
-            >
-              <LogOut className="h-3.5 w-3.5" aria-hidden="true" />
-              <span>Sign Out</span>
-            </button>
-            <button
-              type="button"
-              onClick={onBackToDashboard}
-              className="inline-flex min-h-[40px] flex-1 items-center justify-center rounded-xl border border-white/12 bg-white/[0.04] px-4 text-xs font-medium text-slate-200 hover:bg-white/[0.08]"
-            >
-              Back to Portal
-            </button>
-          </div>
-        </section>
-      </main>
-    );
-  }
-
-  // --- Signed In But Not Authorized as Admin ---
-  if (!isAdmin) {
-    return (
-      <main className="relative flex min-h-[calc(100vh-8rem)] w-full items-center justify-center overflow-hidden px-4 py-12">
-        <section
-          aria-label="Administrator Authorization Required"
-          className="relative w-full max-w-[460px] rounded-3xl border border-rose-500/25 bg-[#0A0812]/95 p-6 text-center shadow-[0_24px_80px_rgba(0,0,0,0.85)] sm:p-8"
-        >
-          <div className="mx-auto mb-3.5 flex h-12 w-12 items-center justify-center rounded-2xl border border-rose-500/35 bg-rose-500/15 text-rose-400">
-            <ShieldAlert className="h-6 w-6" aria-hidden="true" />
-          </div>
-          <h1 className="font-display text-xl font-bold text-white">Access Denied</h1>
-          <p className="mt-2 text-sm text-slate-400">
-            The signed-in account does not have administrator permissions in Firestore Security
-            Rules.
-          </p>
-
-          <div className="mt-4 rounded-xl border border-white/[0.08] bg-[#050409] p-3.5 text-left text-xs">
-            <div className="flex items-center justify-between gap-2 text-slate-400">
-              <span>Account</span>
-              <span className="font-mono text-slate-200">{user.email ?? 'Unknown'}</span>
-            </div>
-            <div className="mt-1.5 flex items-center justify-between gap-2 text-slate-400">
-              <span>UID</span>
-              <span className="truncate font-mono text-slate-300">{user.uid}</span>
-            </div>
-          </div>
-
-          <div className="mt-6 flex flex-col gap-2.5 sm:flex-row">
-            <button
-              type="button"
-              onClick={() => void handleLogout()}
-              className="inline-flex min-h-[42px] flex-1 items-center justify-center gap-2 rounded-xl border border-rose-500/25 bg-rose-500/10 px-4 text-sm font-medium text-rose-200 hover:bg-rose-500/20"
-            >
-              <LogOut className="h-4 w-4" aria-hidden="true" />
-              <span>Sign Out</span>
-            </button>
-            <button
-              type="button"
-              onClick={onBackToDashboard}
-              className="inline-flex min-h-[42px] flex-1 items-center justify-center rounded-xl border border-white/12 bg-white/[0.04] px-4 text-sm font-medium text-slate-200 hover:bg-white/[0.08]"
-            >
-              Back to Portal
-            </button>
-          </div>
-        </section>
-      </main>
-    );
-  }
-
   // --- Authenticated Admin Dashboard ---
   return (
     <main className="mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
@@ -719,7 +575,7 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
               <ShieldCheck className="h-4 w-4" aria-hidden="true" />
               <span>IndoXDPro Admin</span>
               <span aria-hidden="true">·</span>
-              <span className="font-mono text-slate-300">{user.email ?? user.uid}</span>
+              <span className="font-mono text-slate-300">{user?.email ?? user?.uid ?? 'ADMIN551'}</span>
               {loadingData && <Loader2 className="h-3.5 w-3.5 animate-spin text-violet-400" />}
             </div>
             <h1 className="mt-1.5 font-display text-2xl font-bold tracking-tight text-white sm:text-3xl">
@@ -1779,10 +1635,10 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
         }}
         onSubmit={async (input: VpnServerInput) => {
           if (editingVpnEntry) {
-            await updateAdminVpnEntry(user.uid, editingVpnEntry.id, input);
+            await updateAdminVpnEntry(user?.uid ?? 'admin', editingVpnEntry.id, input);
             showToast('VPN entry updated', 'success', `${input.countryName} · ${input.ipAddress}`);
           } else {
-            await createAdminVpnEntry(user.uid, input);
+            await createAdminVpnEntry(user?.uid ?? 'admin', input);
             showToast('VPN entry added', 'success', `${input.countryName} · ${input.ipAddress}`);
           }
         }}
@@ -1808,7 +1664,7 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
             await updateAdminCountry(editingCountry.id, input);
             showToast('Country updated', 'success', input.name);
           } else {
-            await createAdminCountry(user.uid, input);
+            await createAdminCountry(user?.uid ?? 'admin', input);
             showToast('Country added', 'success', input.name);
           }
         }}
@@ -1824,10 +1680,10 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
         }}
         onSave={async (input) => {
           if (editingIpCode) {
-            await updateAdminIpCode(user.uid, editingIpCode.id, input);
+            await updateAdminIpCode(user?.uid ?? 'admin', editingIpCode.id, input);
             showToast('IP Code updated', 'success', input.code);
           } else {
-            await createAdminIpCode(user.uid, input);
+            await createAdminIpCode(user?.uid ?? 'admin', input);
             showToast('IP Code added', 'success', input.code);
           }
         }}
@@ -1843,10 +1699,10 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
         }}
         onSave={async (input) => {
           if (editingRedeem) {
-            await updateAdminRedeemCode(user.uid, editingRedeem.id, input);
+            await updateAdminRedeemCode(user?.uid ?? 'admin', editingRedeem.id, input);
             showToast('Redeem code updated', 'success', input.code);
           } else {
-            await createAdminRedeemCode(user.uid, input);
+            await createAdminRedeemCode(user?.uid ?? 'admin', input);
             showToast('Redeem code added', 'success', input.code);
           }
         }}
@@ -1889,11 +1745,11 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
       {/* Admin IDs & Profiles Modal */}
       <AdminAccountsModal
         isOpen={adminAccountsModalOpen}
-        currentUid={user.uid}
+        currentUid={user?.uid ?? 'admin'}
         mappings={adminIdMappings}
         onClose={() => setAdminAccountsModalOpen(false)}
         onSaveMapping={async (input) => {
-          await saveAdminIdMapping(user.uid, input);
+          await saveAdminIdMapping(user?.uid ?? 'admin', input);
           showToast('Admin ID saved', 'success', input.adminId);
         }}
         onDeleteMapping={async (idKey) => {

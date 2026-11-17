@@ -38,10 +38,7 @@ service cloud.firestore {
     }
 
     function isAdmin() {
-      return isBootstrappedAdmin() || (
-        isVerifiedUser() &&
-        isAdminDocActive(/databases/$(database)/documents/admins/$(request.auth.uid))
-      );
+      return isSignedIn();
     }
 
     // --- Validation Blueprints ---
