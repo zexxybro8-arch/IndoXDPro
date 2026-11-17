@@ -172,7 +172,7 @@ export function VpnProvider({ children }: { children: React.ReactNode }) {
       const validPass = passwordInput === 'ADMIN551';
 
       if (!validId || !validPass) {
-        throw new Error('Invalid Admin ID or password. Use Admin ID: ADMIN (or ADMIN551) and Password: ADMIN551.');
+        throw new Error('Invalid Admin ID or password.');
       }
 
       setAdminCheckLoading(true);

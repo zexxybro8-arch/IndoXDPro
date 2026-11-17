@@ -968,7 +968,7 @@ export function AdminAccountsModal({
                 type="text"
                 value={adminId}
                 onChange={(e) => setAdminId(e.target.value)}
-                placeholder="e.g., ADMIN551"
+                placeholder="e.g., ADMIN-01"
                 className="mt-1.5 min-h-[40px] w-full rounded-xl border border-white/12 bg-[#050409] px-3 font-mono text-sm text-white placeholder:font-sans placeholder:text-slate-500 focus:border-violet-500 focus:outline-none"
               />
             </div>

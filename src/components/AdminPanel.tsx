@@ -428,7 +428,7 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
     );
   }
 
-  // --- Frontend Admin Login Screen (Admin ID: ADMIN or ADMIN551, Password: ADMIN551) ---
+  // --- Frontend Admin Login Screen ---
   if (!isAdmin) {
     return (
       <main className="relative flex min-h-[calc(100vh-8rem)] w-full items-center justify-center overflow-hidden px-4 py-12">
@@ -448,9 +448,6 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
             <h1 className="font-display text-2xl font-bold tracking-tight text-white">
               IndoXDPro Admin
             </h1>
-            <p className="mt-1.5 text-sm text-slate-400">
-              Enter Admin ID (<code className="font-mono text-violet-300">ADMIN</code> or <code className="font-mono text-violet-300">ADMIN551</code>) and Password (<code className="font-mono text-violet-300">ADMIN551</code>).
-            </p>
           </div>
 
           <form onSubmit={(e) => void handleAdminLogin(e)} noValidate className="space-y-4">
@@ -476,7 +473,7 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
                     setAdminIdInput(e.target.value);
                     if (loginError) setLoginError(null);
                   }}
-                  placeholder="ADMIN"
+                  placeholder="Enter Admin ID"
                   className="min-h-[50px] w-full rounded-2xl border border-violet-500/25 bg-[#050409] pl-11 pr-4 font-mono text-sm text-white placeholder:font-sans placeholder:text-slate-500 transition-colors focus:border-violet-400 focus:outline-none focus:ring-2 focus:ring-violet-500/20 disabled:opacity-60"
                 />
               </div>
@@ -504,7 +501,7 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
                     setAdminPasswordInput(e.target.value);
                     if (loginError) setLoginError(null);
                   }}
-                  placeholder="ADMIN551"
+                  placeholder="Enter Admin Password"
                   className="min-h-[50px] w-full rounded-2xl border border-violet-500/25 bg-[#050409] pl-11 pr-12 text-sm text-white placeholder:text-slate-500 transition-colors focus:border-violet-400 focus:outline-none focus:ring-2 focus:ring-violet-500/20 disabled:opacity-60"
                 />
                 <button
@@ -575,7 +572,7 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
               <ShieldCheck className="h-4 w-4" aria-hidden="true" />
               <span>IndoXDPro Admin</span>
               <span aria-hidden="true">·</span>
-              <span className="font-mono text-slate-300">{user?.email ?? user?.uid ?? 'ADMIN551'}</span>
+              <span className="font-mono text-slate-300">{user?.email ?? user?.uid ?? 'Authorized Admin'}</span>
               {loadingData && <Loader2 className="h-3.5 w-3.5 animate-spin text-violet-400" />}
             </div>
             <h1 className="mt-1.5 font-display text-2xl font-bold tracking-tight text-white sm:text-3xl">
