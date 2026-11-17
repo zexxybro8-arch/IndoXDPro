@@ -1,0 +1,284 @@
+{
+  "entities": {
+    "VpnServer": {
+      "title": "VpnServer",
+      "description": "A country-specific VPN server entry managed by an administrator.",
+      "type": "object",
+      "properties": {
+        "countryName": {
+          "type": "string",
+          "description": "Display name of the VPN country (e.g., Germany, Japan, United States).",
+          "minLength": 2,
+          "maxLength": 80
+        },
+        "countryCode": {
+          "type": "string",
+          "description": "ISO 3166-1 alpha-2 country code for built-in SVG flags, or empty string when using a custom uploaded flag.",
+          "minLength": 0,
+          "maxLength": 10,
+          "pattern": "^([A-Z]{2}(-[A-Z]{2,3})?)?$"
+        },
+        "flagMode": {
+          "type": "string",
+          "description": "Indicates whether the flag uses a preset ISO code or a custom uploaded image.",
+          "enum": ["preset", "upload"]
+        },
+        "flagDataUrl": {
+          "type": "string",
+          "description": "Base64 data URL for a custom uploaded flag image (empty when flagMode is preset).",
+          "minLength": 0,
+          "maxLength": 120000
+        },
+        "ipAddress": {
+          "type": "string",
+          "description": "IPv4, IPv6, or endpoint address of the VPN server.",
+          "minLength": 3,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9.:-]+$"
+        },
+        "ipCode": {
+          "type": "string",
+          "description": "Access code, port configuration, or node identifier associated with the IP address.",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_.:/\\-]+$"
+        },
+        "status": {
+          "type": "string",
+          "description": "Operational state of the VPN server.",
+          "enum": ["Active", "Inactive"]
+        },
+        "username": {
+          "type": "string",
+          "description": "Optional VPN connection username.",
+          "minLength": 0,
+          "maxLength": 100
+        },
+        "password": {
+          "type": "string",
+          "description": "Optional VPN connection password.",
+          "minLength": 0,
+          "maxLength": 100
+        },
+        "notes": {
+          "type": "string",
+          "description": "Additional instructions or configuration notes for users.",
+          "minLength": 0,
+          "maxLength": 500
+        },
+        "createdBy": {
+          "type": "string",
+          "description": "Firebase Auth UID of the administrator who created this entry.",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the VPN entry was created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the VPN entry was last updated."
+        }
+      },
+      "required": [
+        "countryName",
+        "countryCode",
+        "flagMode",
+        "flagDataUrl",
+        "ipAddress",
+        "ipCode",
+        "status",
+        "username",
+        "password",
+        "notes",
+        "createdBy",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "RedeemCode": {
+      "title": "RedeemCode",
+      "description": "Admin-managed redeem code with rupee balance, status, expiry date, and atomic redemption state.",
+      "type": "object",
+      "properties": {
+        "codeId": {
+          "type": "string",
+          "description": "Unique identifier for the redeem code record.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_-]+$"
+        },
+        "code": {
+          "type": "string",
+          "description": "Custom redeem code string (e.g., INDOX100).",
+          "minLength": 2,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_-]+$"
+        },
+        "balance": {
+          "type": "number",
+          "description": "Monetary balance associated with this redeem code in INR."
+        },
+        "status": {
+          "type": "string",
+          "description": "Administrative status of the redeem code.",
+          "enum": ["Active", "Inactive"]
+        },
+        "expiryDate": {
+          "type": "string",
+          "description": "Optional expiry date (YYYY-MM-DD) or empty string if no expiry.",
+          "minLength": 0,
+          "maxLength": 32
+        },
+        "redemptionStatus": {
+          "type": "string",
+          "description": "Tracks whether the code has been redeemed.",
+          "enum": ["Unused", "Redeemed"]
+        },
+        "redeemedAt": {
+          "type": "string",
+          "description": "ISO timestamp when redeemed, or empty string if unused.",
+          "minLength": 0,
+          "maxLength": 64
+        },
+        "createdBy": {
+          "type": "string",
+          "description": "Firebase Auth UID of the administrator who created the code.",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the redeem code was created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the redeem code was last updated."
+        }
+      },
+      "required": [
+        "codeId",
+        "code",
+        "balance",
+        "status",
+        "expiryDate",
+        "redemptionStatus",
+        "redeemedAt",
+        "createdBy",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "IpCode": {
+      "title": "IpCode",
+      "description": "Admin-managed IP Code entries used to verify user VPN connections.",
+      "type": "object",
+      "properties": {
+        "codeId": {
+          "type": "string",
+          "description": "Unique identifier for the IP Code record.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_-]+$"
+        },
+        "code": {
+          "type": "string",
+          "description": "IP Code string created by an administrator.",
+          "minLength": 1,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_.:/\\-]+$"
+        },
+        "label": {
+          "type": "string",
+          "description": "Optional note or label for this IP Code.",
+          "minLength": 0,
+          "maxLength": 100
+        },
+        "status": {
+          "type": "string",
+          "description": "Operational state of the IP Code.",
+          "enum": ["Active", "Inactive"]
+        },
+        "createdBy": {
+          "type": "string",
+          "description": "Firebase Auth UID of the administrator who created the IP Code.",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the IP Code was created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the IP Code was last updated."
+        }
+      },
+      "required": [
+        "codeId",
+        "code",
+        "label",
+        "status",
+        "createdBy",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "AdminUser": {
+      "title": "AdminUser",
+      "description": "Authorized administrator record granting access to manage VPN server entries and redeem codes.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "description": "Firebase Auth UID of the authorized admin.",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "email": {
+          "type": "string",
+          "description": "Verified email address of the authorized admin.",
+          "minLength": 3,
+          "maxLength": 160
+        },
+        "addedBy": {
+          "type": "string",
+          "description": "UID of the administrator who granted access.",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when admin access was granted."
+        }
+      },
+      "required": ["uid", "email", "addedBy", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/vpn_servers/{serverId}": {
+      "schema": { "$ref": "#/entities/VpnServer" },
+      "description": "VPN server entries written exclusively by authenticated, verified administrators."
+    },
+    "/redeem_codes/{codeId}": {
+      "schema": { "$ref": "#/entities/RedeemCode" },
+      "description": "Admin-managed redeem codes with INR balance, expiry date, and atomic redemption status."
+    },
+    "/ip_codes/{ipCodeId}": {
+      "schema": { "$ref": "#/entities/IpCode" },
+      "description": "Admin-managed IP Codes required for VPN connection verification."
+    },
+    "/admins/{adminUid}": {
+      "schema": { "$ref": "#/entities/AdminUser" },
+      "description": "Protected registry of authorized administrator UIDs. Readable only by the owner UID or existing admins; writable only by existing admins."
+    }
+  }
+}

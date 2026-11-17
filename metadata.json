@@ -1,0 +1,6 @@
+{
+  "name": "Vespera VPN",
+  "description": "Country-wise VPN server directory and protected administrative management console.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

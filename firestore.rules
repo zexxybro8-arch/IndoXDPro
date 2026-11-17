@@ -1,0 +1,306 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global Safety Net (Default Deny)
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // --- Global Helpers ---
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isBootstrappedAdmin() {
+      return isVerifiedUser() && request.auth.token.email == 'zexxybro8@gmail.com';
+    }
+
+    function isAdmin() {
+      return isBootstrappedAdmin() || (
+        isVerifiedUser() &&
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    // --- Validation Blueprints ---
+    function isValidVpnServer(data) {
+      return data.keys().hasAll([
+        'countryName',
+        'countryCode',
+        'flagMode',
+        'flagDataUrl',
+        'ipAddress',
+        'ipCode',
+        'status',
+        'username',
+        'password',
+        'notes',
+        'createdBy',
+        'createdAt',
+        'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'countryName',
+        'countryCode',
+        'flagMode',
+        'flagDataUrl',
+        'ipAddress',
+        'ipCode',
+        'status',
+        'username',
+        'password',
+        'notes',
+        'createdBy',
+        'createdAt',
+        'updatedAt'
+      ]) &&
+      data.countryName is string && data.countryName.size() >= 2 && data.countryName.size() <= 80 &&
+      data.countryCode is string && data.countryCode.size() <= 10 && data.countryCode.matches('^([A-Z]{2}(-[A-Z]{2,3})?)?$') &&
+      data.flagMode is string && data.flagMode in ['preset', 'upload'] &&
+      data.flagDataUrl is string && data.flagDataUrl.size() <= 120000 &&
+      (
+        (data.flagMode == 'preset' && data.countryCode.size() >= 2 && data.flagDataUrl.size() == 0) ||
+        (data.flagMode == 'upload' && data.flagDataUrl.size() >= 20 && data.flagDataUrl.matches('^data:image/(png|jpeg|jpg|webp|svg\\+xml);base64,[A-Za-z0-9+/=]+$'))
+      ) &&
+      data.ipAddress is string && data.ipAddress.size() >= 3 && data.ipAddress.size() <= 64 && data.ipAddress.matches('^[a-zA-Z0-9.:-]+$') &&
+      data.ipCode is string && data.ipCode.size() >= 1 && data.ipCode.size() <= 64 && data.ipCode.matches('^[a-zA-Z0-9_.:/-]+$') &&
+      data.status is string && data.status in ['Active', 'Inactive'] &&
+      data.username is string && data.username.size() <= 100 &&
+      data.password is string && data.password.size() <= 100 &&
+      data.notes is string && data.notes.size() <= 500 &&
+      data.createdBy is string && data.createdBy.size() >= 1 && data.createdBy.size() <= 128 &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    function isValidRedeemCode(data) {
+      return data.keys().hasAll([
+        'codeId',
+        'code',
+        'balance',
+        'status',
+        'expiryDate',
+        'redemptionStatus',
+        'redeemedAt',
+        'createdBy',
+        'createdAt',
+        'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'codeId',
+        'code',
+        'balance',
+        'status',
+        'expiryDate',
+        'redemptionStatus',
+        'redeemedAt',
+        'createdBy',
+        'createdAt',
+        'updatedAt'
+      ]) &&
+      isValidId(data.codeId) &&
+      data.code is string && data.code.size() >= 2 && data.code.size() <= 64 && data.code.matches('^[a-zA-Z0-9_-]+$') &&
+      data.balance is number && data.balance >= 0 && data.balance <= 10000000 &&
+      data.status is string && data.status in ['Active', 'Inactive'] &&
+      data.expiryDate is string && data.expiryDate.size() <= 32 &&
+      data.redemptionStatus is string && data.redemptionStatus in ['Unused', 'Redeemed'] &&
+      data.redeemedAt is string && data.redeemedAt.size() <= 64 &&
+      data.createdBy is string && data.createdBy.size() >= 1 && data.createdBy.size() <= 128 &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    function isValidIpCode(data) {
+      return data.keys().hasAll([
+        'codeId',
+        'code',
+        'label',
+        'status',
+        'createdBy',
+        'createdAt',
+        'updatedAt'
+      ]) &&
+      data.keys().hasOnly([
+        'codeId',
+        'code',
+        'label',
+        'status',
+        'createdBy',
+        'createdAt',
+        'updatedAt'
+      ]) &&
+      isValidId(data.codeId) &&
+      data.code is string && data.code.size() >= 1 && data.code.size() <= 64 && data.code.matches('^[a-zA-Z0-9_.:/-]+$') &&
+      data.label is string && data.label.size() <= 100 &&
+      data.status is string && data.status in ['Active', 'Inactive'] &&
+      data.createdBy is string && data.createdBy.size() >= 1 && data.createdBy.size() <= 128 &&
+      data.createdAt is timestamp &&
+      data.updatedAt is timestamp;
+    }
+
+    function isValidAdminUser(data) {
+      return data.keys().hasAll(['uid', 'email', 'addedBy', 'createdAt']) &&
+      data.keys().hasOnly(['uid', 'email', 'addedBy', 'createdAt']) &&
+      data.uid is string && data.uid.size() >= 1 && data.uid.size() <= 128 && data.uid.matches('^[a-zA-Z0-9_-]+$') &&
+      data.email is string && data.email.size() >= 3 && data.email.size() <= 160 &&
+      data.addedBy is string && data.addedBy.size() >= 1 && data.addedBy.size() <= 128 &&
+      data.createdAt is timestamp;
+    }
+
+    // --- Collection Rules ---
+    match /vpn_servers/{serverId} {
+      allow get: if isValidId(serverId);
+      allow list: if resource.data.status in ['Active', 'Inactive'];
+
+      allow create: if isVerifiedUser() &&
+        isValidId(serverId) &&
+        isValidVpnServer(incoming()) &&
+        incoming().createdBy == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        isAdmin();
+
+      allow update: if isVerifiedUser() &&
+        isValidId(serverId) &&
+        isValidVpnServer(incoming()) &&
+        incoming().createdBy == existing().createdBy &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        (
+          (
+            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+          ) ||
+          (
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'countryName',
+              'countryCode',
+              'flagMode',
+              'flagDataUrl',
+              'ipAddress',
+              'ipCode',
+              'status',
+              'username',
+              'password',
+              'notes',
+              'updatedAt'
+            ])
+          )
+        ) &&
+        isAdmin();
+
+      allow delete: if isVerifiedUser() && isValidId(serverId) && isAdmin();
+    }
+
+    match /redeem_codes/{codeId} {
+      // Exact-code lookup only; public list scraping is strictly blocked
+      allow get: if isValidId(codeId);
+      allow list: if isVerifiedUser() && isAdmin();
+
+      allow create: if isVerifiedUser() &&
+        isValidId(codeId) &&
+        isValidRedeemCode(incoming()) &&
+        incoming().codeId == codeId &&
+        incoming().createdBy == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        isAdmin();
+
+      allow update: if isVerifiedUser() &&
+        isValidId(codeId) &&
+        isValidRedeemCode(incoming()) &&
+        incoming().codeId == existing().codeId &&
+        incoming().createdBy == existing().createdBy &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        (
+          (
+            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+          ) ||
+          (
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'code',
+              'balance',
+              'status',
+              'expiryDate',
+              'redemptionStatus',
+              'redeemedAt',
+              'updatedAt'
+            ])
+          )
+        ) &&
+        isAdmin();
+
+      allow delete: if isVerifiedUser() && isValidId(codeId) && isAdmin();
+    }
+
+    match /ip_codes/{ipCodeId} {
+      // Exact-code lookup only; public list scraping is blocked
+      allow get: if isValidId(ipCodeId);
+      allow list: if isVerifiedUser() && isAdmin();
+
+      allow create: if isVerifiedUser() &&
+        isValidId(ipCodeId) &&
+        isValidIpCode(incoming()) &&
+        incoming().codeId == ipCodeId &&
+        incoming().createdBy == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        incoming().updatedAt == request.time &&
+        isAdmin();
+
+      allow update: if isVerifiedUser() &&
+        isValidId(ipCodeId) &&
+        isValidIpCode(incoming()) &&
+        incoming().codeId == existing().codeId &&
+        incoming().createdBy == existing().createdBy &&
+        incoming().createdAt == existing().createdAt &&
+        incoming().updatedAt == request.time &&
+        (
+          (
+            incoming().diff(existing()).affectedKeys().hasOnly(['status', 'updatedAt'])
+          ) ||
+          (
+            incoming().diff(existing()).affectedKeys().hasOnly([
+              'code',
+              'label',
+              'status',
+              'updatedAt'
+            ])
+          )
+        ) &&
+        isAdmin();
+
+      allow delete: if isVerifiedUser() && isValidId(ipCodeId) && isAdmin();
+    }
+
+    match /admins/{adminUid} {
+      allow get: if isSignedIn() && isValidId(adminUid) && (request.auth.uid == adminUid || isAdmin());
+      allow list: if isVerifiedUser() && isAdmin();
+      allow create: if isVerifiedUser() &&
+        isValidId(adminUid) &&
+        isValidAdminUser(incoming()) &&
+        incoming().uid == adminUid &&
+        incoming().addedBy == request.auth.uid &&
+        incoming().createdAt == request.time &&
+        isAdmin();
+      allow update: if false;
+      allow delete: if isVerifiedUser() && isValidId(adminUid) && isAdmin() && adminUid != request.auth.uid;
+    }
+  }
+}
