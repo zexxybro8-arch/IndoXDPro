@@ -197,6 +197,21 @@ export function subscribeAdminCountries(
   return onSnapshot(
     q,
     (snapshot) => {
+      if (snapshot.empty) {
+        onData(
+          COUNTRY_OPTIONS.map((c) => ({
+            id: `cty_${c.code.toLowerCase()}`,
+            name: c.name,
+            code: c.code,
+            keywords: c.keywords ?? '',
+            flagMode: 'preset' as const,
+            flagDataUrl: '',
+            isActive: true,
+          }))
+        );
+        return;
+      }
+
       const list: ManagedCountry[] = snapshot.docs
         .map((docSnap) => {
           const data = docSnap.data();
