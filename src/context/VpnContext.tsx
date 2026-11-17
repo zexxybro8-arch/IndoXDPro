@@ -2,7 +2,6 @@ import React, { createContext, useCallback, useContext, useEffect, useMemo, useS
 import {
   User,
   onAuthStateChanged,
-  signInAnonymously,
   signOut,
 } from 'firebase/auth';
 import {
@@ -178,19 +177,9 @@ export function VpnProvider({ children }: { children: React.ReactNode }) {
 
       setAdminCheckLoading(true);
       try {
-        let currentUser = auth.currentUser;
-        if (!currentUser) {
-          const cred = await signInAnonymously(auth);
-          currentUser = cred.user;
-        }
-
         setIsAdmin(true);
         if (typeof window !== 'undefined') {
           localStorage.setItem('indoxdpro_admin_active', 'true');
-        }
-
-        if (currentUser) {
-          void ensureAdminProfileInFirestore(currentUser, trimmedId);
         }
 
         showToast('Signed in to IndoXDPro Admin', 'success', trimmedId);

@@ -1,7 +1,16 @@
 import { initializeApp } from 'firebase/app';
 import { getAuth } from 'firebase/auth';
 import { doc, getDocFromServer, getFirestore } from 'firebase/firestore';
-import firebaseConfig from '../../firebase-applet-config.json';
+
+const firebaseConfig = {
+  projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID || 'hip-chiller-25v9p',
+  appId: import.meta.env.VITE_FIREBASE_APP_ID || '1:862745783879:web:a504c7162881966dcdcb62',
+  apiKey: import.meta.env.VITE_FIREBASE_API_KEY || 'AIzaSyAyE08Mz9xl-0i8vnbU2wYYmWywalbG84E',
+  authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || 'hip-chiller-25v9p.firebaseapp.com',
+  firestoreDatabaseId: import.meta.env.VITE_FIRESTORE_DATABASE_ID || 'ai-studio-d2f9941b-3dca-468f-ab87-0c3a7b331e33',
+  storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || 'hip-chiller-25v9p.firebasestorage.app',
+  messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '862745783879',
+};
 
 const app = initializeApp(firebaseConfig);
 export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId);
