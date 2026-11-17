@@ -414,7 +414,7 @@
     },
     "AdminUser": {
       "title": "AdminUser",
-      "description": "Authorized administrator record granting access to manage IndoXDPro Firestore collections.",
+      "description": "Authorized administrator profile granting access to manage IndoXDPro Firestore collections (zero passwords stored).",
       "type": "object",
       "properties": {
         "uid": {
@@ -425,9 +425,31 @@
         },
         "email": {
           "type": "string",
-          "description": "Verified email address of the authorized admin.",
+          "description": "Verified Firebase Auth email address of the authorized admin.",
           "minLength": 3,
           "maxLength": 160
+        },
+        "adminId": {
+          "type": "string",
+          "description": "Authorized Admin ID assigned to this administrator (e.g., ADMIN551).",
+          "minLength": 0,
+          "maxLength": 64,
+          "pattern": "^([a-zA-Z0-9_-]{2,64})?$"
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Display name or title for the administrator.",
+          "minLength": 0,
+          "maxLength": 80
+        },
+        "role": {
+          "type": "string",
+          "description": "Administrative role.",
+          "enum": ["Admin", "SuperAdmin"]
+        },
+        "isActive": {
+          "type": "boolean",
+          "description": "Whether this administrator profile is currently active."
         },
         "addedBy": {
           "type": "string",
@@ -439,9 +461,84 @@
           "type": "string",
           "format": "date-time",
           "description": "Server timestamp when admin access was granted."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when admin profile was last updated."
         }
       },
       "required": ["uid", "email", "addedBy", "createdAt"]
+    },
+    "AdminIdMapping": {
+      "title": "AdminIdMapping",
+      "description": "Maps an authorized Admin ID (e.g., ADMIN551) to its Firebase Authentication email account without storing any password.",
+      "type": "object",
+      "properties": {
+        "idKey": {
+          "type": "string",
+          "description": "Normalized lowercase Admin ID key used as the Firestore document ID.",
+          "minLength": 2,
+          "maxLength": 64,
+          "pattern": "^[a-z0-9_-]+$"
+        },
+        "adminId": {
+          "type": "string",
+          "description": "Configured Admin ID label (e.g., ADMIN551).",
+          "minLength": 2,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9_-]+$"
+        },
+        "authEmail": {
+          "type": "string",
+          "description": "Firebase Authentication Email/Password account email mapped to this Admin ID.",
+          "minLength": 3,
+          "maxLength": 160
+        },
+        "uid": {
+          "type": "string",
+          "description": "Linked Firebase Auth UID once signed in or configured.",
+          "minLength": 0,
+          "maxLength": 128
+        },
+        "displayName": {
+          "type": "string",
+          "description": "Optional administrator label.",
+          "minLength": 0,
+          "maxLength": 80
+        },
+        "isActive": {
+          "type": "boolean",
+          "description": "Whether login using this Admin ID is enabled."
+        },
+        "updatedBy": {
+          "type": "string",
+          "description": "Firebase Auth UID of the admin who saved this mapping.",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when this Admin ID mapping was created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when this Admin ID mapping was last updated."
+        }
+      },
+      "required": [
+        "idKey",
+        "adminId",
+        "authEmail",
+        "uid",
+        "displayName",
+        "isActive",
+        "updatedBy",
+        "createdAt",
+        "updatedAt"
+      ]
     }
   },
   "firestore": {
@@ -467,7 +564,11 @@
     },
     "/admins/{adminUid}": {
       "schema": { "$ref": "#/entities/AdminUser" },
-      "description": "Protected registry of authorized administrator UIDs."
+      "description": "Protected registry of authorized administrator profiles and UIDs."
+    },
+    "/admin_ids/{adminIdKey}": {
+      "schema": { "$ref": "#/entities/AdminIdMapping" },
+      "description": "Exact-ID lookup mapping configured Admin IDs to their Firebase Auth email accounts."
     }
   }
 }

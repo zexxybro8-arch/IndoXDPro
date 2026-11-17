@@ -15,10 +15,18 @@ import {
   where,
   writeBatch,
 } from 'firebase/firestore';
+import type { User } from 'firebase/auth';
 import { COUNTRY_OPTIONS } from './countries';
-import { OperationType, db, handleFirestoreError } from './firebase';
+import {
+  BOOTSTRAPPED_ADMIN_EMAIL,
+  OperationType,
+  PRIMARY_ADMIN_ID,
+  db,
+  handleFirestoreError,
+} from './firebase';
 import { FIELD_LIMITS, isStrictIpAddress, validateVpnInput } from './validation';
 import {
+  AdminIdMappingEntry,
   ConnectionRequestLog,
   FlagMode,
   IpCodeEntry,
@@ -32,6 +40,7 @@ import {
 
 const IP_CODE_REGEX = /^[a-zA-Z0-9_.:/-]{1,64}$/;
 const REDEEM_CODE_REGEX = /^[a-zA-Z0-9_-]{2,64}$/;
+const ADMIN_ID_REGEX = /^[a-zA-Z0-9_-]{2,64}$/;
 const EXPIRY_DATE_REGEX = /^\d{4}-\d{2}-\d{2}$/;
 const COUNTRY_CODE_REGEX = /^([A-Z]{2}(-[A-Z]{2,3})?)?$/;
 
@@ -1226,5 +1235,266 @@ export async function deleteAdminRequest(id: string): Promise<void> {
     await deleteDoc(doc(db, 'connection_requests', id));
   } catch (error) {
     handleFirestoreError(error, OperationType.DELETE, `connection_requests/${id}`);
+  }
+}
+
+// --- Admin ID & Profile Management (Zero Passwords Stored) ---
+
+export async function resolveAdminAuthEmail(
+  adminIdInput: string
+): Promise<{ adminId: string; authEmail: string }> {
+  const trimmed = adminIdInput.trim();
+  if (!trimmed) {
+    throw new Error('Please enter your Admin ID.');
+  }
+
+  const normalizedKey = trimmed.toLowerCase();
+  if (ADMIN_ID_REGEX.test(trimmed)) {
+    try {
+      const mappingSnap = await getDoc(doc(db, 'admin_ids', normalizedKey));
+      if (mappingSnap.exists()) {
+        const data = mappingSnap.data();
+        if (data.isActive === false) {
+          throw new Error('This Admin ID has been deactivated.');
+        }
+        const authEmail = String(data.authEmail ?? '').trim().toLowerCase();
+        if (!authEmail) {
+          throw new Error('Admin ID account configuration is incomplete.');
+        }
+        return {
+          adminId: String(data.adminId ?? trimmed),
+          authEmail,
+        };
+      }
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        (error.message === 'This Admin ID has been deactivated.' ||
+          error.message === 'Admin ID account configuration is incomplete.')
+      ) {
+        throw error;
+      }
+      // Fall through if mapping doc lookup failed due to missing record
+    }
+
+    if (normalizedKey === PRIMARY_ADMIN_ID.toLowerCase()) {
+      return {
+        adminId: PRIMARY_ADMIN_ID,
+        authEmail: BOOTSTRAPPED_ADMIN_EMAIL.toLowerCase(),
+      };
+    }
+
+    throw new Error('Invalid Admin ID or password.');
+  }
+
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed) && trimmed.length <= 160) {
+    return {
+      adminId: trimmed,
+      authEmail: normalizedKey,
+    };
+  }
+
+  throw new Error('Invalid Admin ID or password.');
+}
+
+export async function ensureAdminProfileInFirestore(
+  user: User,
+  usedAdminId?: string
+): Promise<void> {
+  if (!user.emailVerified || !user.email) return;
+
+  const emailLower = user.email.trim().toLowerCase();
+  const isPrimary = emailLower === BOOTSTRAPPED_ADMIN_EMAIL.toLowerCase();
+  const candidateAdminId =
+    usedAdminId && ADMIN_ID_REGEX.test(usedAdminId.trim())
+      ? usedAdminId.trim()
+      : isPrimary
+        ? PRIMARY_ADMIN_ID
+        : '';
+
+  const adminRef = doc(db, 'admins', user.uid);
+  try {
+    const adminSnap = await getDoc(adminRef);
+    if (!adminSnap.exists()) {
+      await setDoc(adminRef, {
+        uid: user.uid,
+        email: emailLower,
+        ...(candidateAdminId ? { adminId: candidateAdminId } : {}),
+        displayName: user.displayName ? user.displayName.slice(0, 80) : 'IndoXDPro Administrator',
+        role: isPrimary ? 'SuperAdmin' : 'Admin',
+        isActive: true,
+        addedBy: user.uid,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    } else {
+      const existingData = adminSnap.data();
+      const needsProfilePatch =
+        (candidateAdminId && !existingData.adminId) ||
+        !existingData.displayName ||
+        !existingData.role ||
+        existingData.isActive === undefined;
+      if (needsProfilePatch) {
+        await updateDoc(adminRef, {
+          adminId: String(existingData.adminId || candidateAdminId || ''),
+          displayName: String(
+            existingData.displayName || user.displayName || 'IndoXDPro Administrator'
+          ).slice(0, 80),
+          role: existingData.role === 'SuperAdmin' || isPrimary ? 'SuperAdmin' : 'Admin',
+          isActive: existingData.isActive !== false,
+          updatedAt: serverTimestamp(),
+        });
+      }
+    }
+
+    if (candidateAdminId) {
+      const idKey = candidateAdminId.toLowerCase();
+      const mapRef = doc(db, 'admin_ids', idKey);
+      const mapSnap = await getDoc(mapRef);
+      if (!mapSnap.exists()) {
+        await setDoc(mapRef, {
+          idKey,
+          adminId: candidateAdminId,
+          authEmail: emailLower,
+          uid: user.uid,
+          displayName: (user.displayName || 'IndoXDPro Administrator').slice(0, 80),
+          isActive: true,
+          updatedBy: user.uid,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      } else if (!mapSnap.data().uid) {
+        await updateDoc(mapRef, {
+          uid: user.uid,
+          updatedBy: user.uid,
+          updatedAt: serverTimestamp(),
+        });
+      }
+    }
+  } catch {
+    // Profile sync is best-effort for bootstrapped admins; rules still protect writes
+  }
+}
+
+export function subscribeAdminIdMappings(
+  onData: (mappings: AdminIdMappingEntry[]) => void
+): () => void {
+  const path = 'admin_ids';
+  return onSnapshot(
+    collection(db, path),
+    (snapshot) => {
+      const list: AdminIdMappingEntry[] = snapshot.docs
+        .map((docSnap) => {
+          const data = docSnap.data();
+          return {
+            idKey: String(data.idKey ?? docSnap.id),
+            adminId: String(data.adminId ?? docSnap.id),
+            authEmail: String(data.authEmail ?? ''),
+            uid: String(data.uid ?? ''),
+            displayName: String(data.displayName ?? ''),
+            isActive: data.isActive !== false,
+            updatedBy: String(data.updatedBy ?? ''),
+            createdAt: timestampToIso(data.createdAt),
+            updatedAt: timestampToIso(data.updatedAt),
+          };
+        })
+        .sort((a, b) => a.adminId.localeCompare(b.adminId));
+      onData(list);
+    },
+    (error) => {
+      handleFirestoreError(error, OperationType.LIST, path);
+    }
+  );
+}
+
+export async function saveAdminIdMapping(
+  currentAdminUid: string,
+  input: {
+    adminId: string;
+    authEmail: string;
+    uid?: string;
+    displayName?: string;
+    isActive: boolean;
+  }
+): Promise<void> {
+  const adminId = input.adminId.trim();
+  const authEmail = input.authEmail.trim().toLowerCase();
+  const uid = (input.uid ?? '').trim();
+  const displayName = (input.displayName ?? '').trim().slice(0, 80);
+  const isActive = Boolean(input.isActive);
+
+  if (!ADMIN_ID_REGEX.test(adminId)) {
+    throw new Error('Admin ID must be 2–64 characters using letters, numbers, - or _.');
+  }
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(authEmail) || authEmail.length > 160) {
+    throw new Error('Enter a valid Firebase Authentication email address.');
+  }
+  if (uid && !/^[a-zA-Z0-9_-]{1,128}$/.test(uid)) {
+    throw new Error('Firebase Auth UID must contain only letters, numbers, - or _.');
+  }
+
+  const idKey = adminId.toLowerCase();
+  const mapRef = doc(db, 'admin_ids', idKey);
+
+  try {
+    const existing = await getDoc(mapRef);
+    if (existing.exists()) {
+      await updateDoc(mapRef, {
+        adminId,
+        authEmail,
+        uid,
+        displayName,
+        isActive,
+        updatedBy: currentAdminUid,
+        updatedAt: serverTimestamp(),
+      });
+    } else {
+      await setDoc(mapRef, {
+        idKey,
+        adminId,
+        authEmail,
+        uid,
+        displayName,
+        isActive,
+        updatedBy: currentAdminUid,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      });
+    }
+
+    if (uid) {
+      const adminRef = doc(db, 'admins', uid);
+      const adminSnap = await getDoc(adminRef);
+      if (!adminSnap.exists()) {
+        await setDoc(adminRef, {
+          uid,
+          email: authEmail,
+          adminId,
+          displayName: displayName || 'IndoXDPro Admin',
+          role: 'Admin',
+          isActive,
+          addedBy: currentAdminUid,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+        });
+      } else {
+        await updateDoc(adminRef, {
+          adminId,
+          displayName: displayName || String(adminSnap.data().displayName || 'IndoXDPro Admin'),
+          isActive: uid === currentAdminUid ? true : isActive,
+          updatedAt: serverTimestamp(),
+        });
+      }
+    }
+  } catch (error) {
+    handleFirestoreError(error, OperationType.WRITE, `admin_ids/${idKey}`);
+  }
+}
+
+export async function deleteAdminIdMapping(idKey: string): Promise<void> {
+  try {
+    await deleteDoc(doc(db, 'admin_ids', idKey));
+  } catch (error) {
+    handleFirestoreError(error, OperationType.DELETE, `admin_ids/${idKey}`);
   }
 }

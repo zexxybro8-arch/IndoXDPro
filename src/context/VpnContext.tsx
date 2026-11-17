@@ -1,8 +1,9 @@
-import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
   User,
   onAuthStateChanged,
-  signInWithPopup,
+  sendEmailVerification,
+  signInWithEmailAndPassword,
   signOut,
 } from 'firebase/auth';
 import {
@@ -19,10 +20,13 @@ import {
   OperationType,
   auth,
   db,
-  googleProvider,
   handleFirestoreError,
 } from '../lib/firebase';
-import { subscribePortalCountries } from '../lib/firestorePortal';
+import {
+  ensureAdminProfileInFirestore,
+  resolveAdminAuthEmail,
+  subscribePortalCountries,
+} from '../lib/firestorePortal';
 import { COUNTRY_OPTIONS } from '../lib/countries';
 import { AdminRecord, ManagedCountry, ToastItem } from '../types/vpn';
 
@@ -37,7 +41,9 @@ interface VpnContextValue {
   toasts: ToastItem[];
   showToast: (title: string, variant?: ToastItem['variant'], detail?: string) => void;
   dismissToast: (id: string) => void;
-  signInWithGoogle: () => Promise<void>;
+  signInWithAdminCredentials: (adminId: string, password: string) => Promise<void>;
+  sendAdminVerificationEmail: () => Promise<void>;
+  refreshAdminSession: () => Promise<boolean>;
   signOutUser: () => Promise<void>;
   addAdmin: (uid: string, email: string) => Promise<void>;
   removeAdmin: (uid: string) => Promise<void>;
@@ -55,6 +61,31 @@ const FALLBACK_COUNTRIES: ManagedCountry[] = COUNTRY_OPTIONS.map((c) => ({
   isActive: true,
 }));
 
+function mapFirebaseAuthError(error: unknown): string {
+  const code =
+    typeof error === 'object' && error !== null && 'code' in error
+      ? String((error as { code?: unknown }).code ?? '')
+      : '';
+
+  switch (code) {
+    case 'auth/invalid-credential':
+    case 'auth/wrong-password':
+    case 'auth/user-not-found':
+    case 'auth/invalid-email':
+      return 'Invalid Admin ID or password.';
+    case 'auth/too-many-requests':
+      return 'Too many failed login attempts. Please wait a moment and try again.';
+    case 'auth/user-disabled':
+      return 'This administrator account has been disabled in Firebase Authentication.';
+    case 'auth/operation-not-allowed':
+      return 'Email/Password sign-in is not enabled in Firebase Authentication yet. Enable Email/Password in Firebase Console → Authentication → Sign-in method.';
+    case 'auth/network-request-failed':
+      return 'Network error while verifying credentials. Check your internet connection.';
+    default:
+      return error instanceof Error ? error.message : 'Unable to authenticate administrator.';
+  }
+}
+
 export function VpnProvider({ children }: { children: React.ReactNode }) {
   const [portalCountries, setPortalCountries] = useState<ManagedCountry[]>(FALLBACK_COUNTRIES);
   const [countriesLoading, setCountriesLoading] = useState(true);
@@ -64,6 +95,7 @@ export function VpnProvider({ children }: { children: React.ReactNode }) {
   const [isAdmin, setIsAdmin] = useState(false);
   const [adminCheckLoading, setAdminCheckLoading] = useState(false);
   const [admins, setAdmins] = useState<AdminRecord[]>([]);
+  const lastAdminIdRef = useRef<string>('');
 
   const [toasts, setToasts] = useState<ToastItem[]>([]);
 
@@ -82,6 +114,40 @@ export function VpnProvider({ children }: { children: React.ReactNode }) {
     setToasts((prev) => prev.filter((item) => item.id !== id));
   }, []);
 
+  const evaluateAdminStatus = useCallback(async (firebaseUser: User | null): Promise<boolean> => {
+    if (!firebaseUser || !firebaseUser.emailVerified) {
+      setIsAdmin(false);
+      setAdminCheckLoading(false);
+      return false;
+    }
+
+    const isBootstrapped =
+      (firebaseUser.email ?? '').toLowerCase() === BOOTSTRAPPED_ADMIN_EMAIL.toLowerCase();
+
+    if (isBootstrapped) {
+      setIsAdmin(true);
+      setAdminCheckLoading(false);
+      void ensureAdminProfileInFirestore(firebaseUser, lastAdminIdRef.current);
+      return true;
+    }
+
+    setAdminCheckLoading(true);
+    try {
+      const adminSnap = await getDoc(doc(db, 'admins', firebaseUser.uid));
+      const allowed = adminSnap.exists() && adminSnap.data()?.isActive !== false;
+      setIsAdmin(allowed);
+      if (allowed) {
+        void ensureAdminProfileInFirestore(firebaseUser, lastAdminIdRef.current);
+      }
+      return allowed;
+    } catch {
+      setIsAdmin(false);
+      return false;
+    } finally {
+      setAdminCheckLoading(false);
+    }
+  }, []);
+
   // Firebase Auth & Verified Admin status check
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
@@ -95,34 +161,11 @@ export function VpnProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      const isBootstrapped =
-        firebaseUser.emailVerified && firebaseUser.email === BOOTSTRAPPED_ADMIN_EMAIL;
-
-      if (isBootstrapped) {
-        setIsAdmin(true);
-        setAdminCheckLoading(false);
-        return;
-      }
-
-      if (!firebaseUser.emailVerified) {
-        setIsAdmin(false);
-        setAdminCheckLoading(false);
-        return;
-      }
-
-      setAdminCheckLoading(true);
-      try {
-        const adminSnap = await getDoc(doc(db, 'admins', firebaseUser.uid));
-        setIsAdmin(adminSnap.exists());
-      } catch {
-        setIsAdmin(false);
-      } finally {
-        setAdminCheckLoading(false);
-      }
+      await evaluateAdminStatus(firebaseUser);
     });
 
     return () => unsubscribe();
-  }, []);
+  }, [evaluateAdminStatus]);
 
   // Real-time active countries listener for the user homepage
   useEffect(() => {
@@ -154,6 +197,10 @@ export function VpnProvider({ children }: { children: React.ReactNode }) {
           return {
             uid: String(data.uid ?? d.id),
             email: String(data.email ?? ''),
+            adminId: data.adminId ? String(data.adminId) : undefined,
+            displayName: data.displayName ? String(data.displayName) : undefined,
+            role: data.role === 'SuperAdmin' ? 'SuperAdmin' : 'Admin',
+            isActive: data.isActive !== false,
             addedBy: String(data.addedBy ?? ''),
             createdAt: data.createdAt ?? null,
           };
@@ -168,37 +215,89 @@ export function VpnProvider({ children }: { children: React.ReactNode }) {
     return () => unsubscribe();
   }, [user, isAdmin]);
 
-  const signInWithGoogle = useCallback(async () => {
-    try {
-      const result = await signInWithPopup(auth, googleProvider);
-      if (result.user) {
-        const verifiedAdminEmail =
-          result.user.emailVerified && result.user.email === BOOTSTRAPPED_ADMIN_EMAIL;
-        if (verifiedAdminEmail) {
-          showToast('Signed in as Administrator', 'success', result.user.email ?? undefined);
-        } else {
-          const adminDoc = await getDoc(doc(db, 'admins', result.user.uid));
-          if (adminDoc.exists() && result.user.emailVerified) {
-            showToast('Signed in as Administrator', 'success', result.user.email ?? undefined);
-          } else {
-            showToast(
-              'Account signed in without admin privileges',
-              'error',
-              result.user.email ?? undefined
-            );
-          }
+  const signInWithAdminCredentials = useCallback(
+    async (adminIdInput: string, passwordInput: string) => {
+      const trimmedId = adminIdInput.trim();
+      if (!trimmedId) {
+        throw new Error('Please enter your Admin ID.');
+      }
+      if (!passwordInput) {
+        throw new Error('Please enter your Admin Password.');
+      }
+
+      const { adminId, authEmail } = await resolveAdminAuthEmail(trimmedId);
+      lastAdminIdRef.current = adminId;
+
+      try {
+        const credential = await signInWithEmailAndPassword(auth, authEmail, passwordInput);
+        const signedUser = credential.user;
+        if (!signedUser.emailVerified) {
+          showToast(
+            'Email verification required',
+            'info',
+            'Verify your admin email to unlock Firestore write access.'
+          );
+          return;
         }
+
+        const allowed = await evaluateAdminStatus(signedUser);
+        if (allowed) {
+          showToast('Signed in to IndoXDPro Admin', 'success', adminId);
+        } else {
+          showToast(
+            'Account signed in without admin privileges',
+            'error',
+            signedUser.email ?? undefined
+          );
+        }
+      } catch (error) {
+        const friendly = mapFirebaseAuthError(error);
+        throw new Error(friendly);
       }
+    },
+    [evaluateAdminStatus, showToast]
+  );
+
+  const sendAdminVerificationEmail = useCallback(async () => {
+    if (!auth.currentUser) {
+      throw new Error('No signed-in account found.');
+    }
+    try {
+      await sendEmailVerification(auth.currentUser);
+      showToast(
+        'Verification email sent',
+        'success',
+        auth.currentUser.email ?? 'Check your inbox.'
+      );
     } catch (error) {
-      const message = error instanceof Error ? error.message : 'Sign-in failed.';
-      if (!message.includes('popup-closed-by-user')) {
-        showToast('Authentication failed', 'error', message);
-      }
+      const message = mapFirebaseAuthError(error);
+      showToast('Could not send verification email', 'error', message);
+      throw new Error(message);
     }
   }, [showToast]);
 
+  const refreshAdminSession = useCallback(async (): Promise<boolean> => {
+    if (!auth.currentUser) return false;
+    await auth.currentUser.reload();
+    await auth.currentUser.getIdToken(true);
+    const refreshedUser = auth.currentUser;
+    setUser(refreshedUser);
+    const allowed = await evaluateAdminStatus(refreshedUser);
+    if (allowed) {
+      showToast('Administrator session verified', 'success', refreshedUser.email ?? undefined);
+    } else if (!refreshedUser.emailVerified) {
+      showToast(
+        'Email is not verified yet',
+        'error',
+        'Click the verification link sent to your email first.'
+      );
+    }
+    return allowed;
+  }, [evaluateAdminStatus, showToast]);
+
   const signOutUser = useCallback(async () => {
     try {
+      lastAdminIdRef.current = '';
       await signOut(auth);
       showToast('Signed out from Admin Panel', 'info');
     } catch (error) {
@@ -226,8 +325,11 @@ export function VpnProvider({ children }: { children: React.ReactNode }) {
         await setDoc(docRef, {
           uid,
           email,
+          role: 'Admin',
+          isActive: true,
           addedBy: user.uid,
           createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
         });
         showToast('Administrator added', 'success', email);
       } catch (error) {
@@ -269,7 +371,9 @@ export function VpnProvider({ children }: { children: React.ReactNode }) {
       toasts,
       showToast,
       dismissToast,
-      signInWithGoogle,
+      signInWithAdminCredentials,
+      sendAdminVerificationEmail,
+      refreshAdminSession,
       signOutUser,
       addAdmin,
       removeAdmin,
@@ -285,7 +389,9 @@ export function VpnProvider({ children }: { children: React.ReactNode }) {
       toasts,
       showToast,
       dismissToast,
-      signInWithGoogle,
+      signInWithAdminCredentials,
+      sendAdminVerificationEmail,
+      refreshAdminSession,
       signOutUser,
       addAdmin,
       removeAdmin,

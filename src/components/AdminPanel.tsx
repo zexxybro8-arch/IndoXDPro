@@ -5,19 +5,24 @@ import {
   CheckCircle2,
   Copy,
   Edit3,
+  Eye,
+  EyeOff,
   Globe2,
   KeyRound,
   Loader2,
   Lock,
   LogOut,
+  MailCheck,
   Network,
   Plus,
   PowerOff,
+  RefreshCw,
   Search,
   ShieldAlert,
   ShieldCheck,
   Ticket,
   Trash2,
+  UserCheck,
 } from 'lucide-react';
 import { useVpn } from '../context/VpnContext';
 import {
@@ -26,12 +31,15 @@ import {
   createAdminRedeemCode,
   createAdminVpnEntry,
   deleteAdminCountry,
+  deleteAdminIdMapping,
   deleteAdminIpCode,
   deleteAdminRedeemCode,
   deleteAdminRequest,
   deleteAdminVpnEntry,
+  saveAdminIdMapping,
   seedCountriesIfEmpty,
   subscribeAdminCountries,
+  subscribeAdminIdMappings,
   subscribeAdminIpCodes,
   subscribeAdminRedeemCodes,
   subscribeAdminRequests,
@@ -45,6 +53,7 @@ import {
   updateAdminVpnEntry,
 } from '../lib/firestorePortal';
 import {
+  AdminIdMappingEntry,
   ConnectionRequestLog,
   FlagMode,
   IpCodeEntry,
@@ -56,6 +65,7 @@ import {
   VpnServerInput,
 } from '../types/vpn';
 import {
+  AdminAccountsModal,
   ConfirmDeleteModal,
   CountryFormModal,
   IpCodeModal,
@@ -76,12 +86,20 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
     authLoading,
     isAdmin,
     adminCheckLoading,
-    signInWithGoogle,
+    signInWithAdminCredentials,
+    sendAdminVerificationEmail,
+    refreshAdminSession,
     signOutUser,
     showToast,
   } = useVpn();
 
+  const [adminIdInput, setAdminIdInput] = useState('');
+  const [adminPasswordInput, setAdminPasswordInput] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
+  const [loginError, setLoginError] = useState<string | null>(null);
   const [signingIn, setSigningIn] = useState(false);
+  const [sendingVerification, setSendingVerification] = useState(false);
+  const [refreshingSession, setRefreshingSession] = useState(false);
 
   // Dashboard Data State (synced live via Firestore onSnapshot)
   const [activeTab, setActiveTab] = useState<AdminTab>('vpn');
@@ -91,6 +109,8 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
   const [ipCodes, setIpCodes] = useState<IpCodeEntry[]>([]);
   const [redeemCodes, setRedeemCodes] = useState<RedeemCodeEntry[]>([]);
   const [requests, setRequests] = useState<ConnectionRequestLog[]>([]);
+  const [adminIdMappings, setAdminIdMappings] = useState<AdminIdMappingEntry[]>([]);
+  const [adminAccountsModalOpen, setAdminAccountsModalOpen] = useState(false);
 
   // Search & Filter State
   const [searchQuery, setSearchQuery] = useState('');
@@ -141,6 +161,7 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
       setIpCodes([]);
       setRedeemCodes([]);
       setRequests([]);
+      setAdminIdMappings([]);
       setLoadingData(false);
       return;
     }
@@ -178,6 +199,9 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
       setRequests(list);
       markReady();
     });
+    const unsubAdminIds = subscribeAdminIdMappings((list) => {
+      setAdminIdMappings(list);
+    });
 
     return () => {
       unsubVpn();
@@ -185,19 +209,38 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
       unsubIpCodes();
       unsubRedeem();
       unsubRequests();
+      unsubAdminIds();
     };
   }, [user, isAdmin]);
 
-  const handleGoogleSignIn = async () => {
+  const handleAdminLogin = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoginError(null);
+
+    if (!adminIdInput.trim()) {
+      setLoginError('Please enter Admin ID.');
+      return;
+    }
+    if (!adminPasswordInput) {
+      setLoginError('Please enter Admin Password.');
+      return;
+    }
+
     setSigningIn(true);
     try {
-      await signInWithGoogle();
+      await signInWithAdminCredentials(adminIdInput, adminPasswordInput);
+      setAdminPasswordInput('');
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Invalid Admin ID or password.';
+      setLoginError(msg);
     } finally {
       setSigningIn(false);
     }
   };
 
   const handleLogout = async () => {
+    setAdminPasswordInput('');
+    setLoginError(null);
     await signOutUser();
   };
 
@@ -387,7 +430,7 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
     );
   }
 
-  // --- Firebase Authentication Login Screen (zero hardcoded credentials) ---
+  // --- Firebase Email/Password Admin ID Login Screen (zero hardcoded passwords) ---
   if (!user) {
     return (
       <main className="relative flex min-h-[calc(100vh-8rem)] w-full items-center justify-center overflow-hidden px-4 py-12">
@@ -408,16 +451,92 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
               IndoXDPro Admin
             </h1>
             <p className="mt-1.5 text-sm text-slate-400">
-              Sign in with your authorized Google administrator account to manage Firestore records.
+              Sign in with your authorized Admin ID and password.
             </p>
           </div>
 
-          <div className="space-y-4">
+          <form onSubmit={(e) => void handleAdminLogin(e)} noValidate className="space-y-4">
+            <div>
+              <label
+                htmlFor="admin-id-input"
+                className="block text-xs font-semibold uppercase tracking-wider text-slate-300"
+              >
+                ADMIN ID
+              </label>
+              <div className="relative mt-2">
+                <UserCheck
+                  className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-violet-400"
+                  aria-hidden="true"
+                />
+                <input
+                  id="admin-id-input"
+                  type="text"
+                  autoComplete="username"
+                  value={adminIdInput}
+                  disabled={signingIn}
+                  onChange={(e) => {
+                    setAdminIdInput(e.target.value);
+                    if (loginError) setLoginError(null);
+                  }}
+                  placeholder="Enter Admin ID"
+                  className="min-h-[50px] w-full rounded-2xl border border-violet-500/25 bg-[#050409] pl-11 pr-4 font-mono text-sm text-white placeholder:font-sans placeholder:text-slate-500 transition-colors focus:border-violet-400 focus:outline-none focus:ring-2 focus:ring-violet-500/20 disabled:opacity-60"
+                />
+              </div>
+            </div>
+
+            <div>
+              <label
+                htmlFor="admin-password-input"
+                className="block text-xs font-semibold uppercase tracking-wider text-slate-300"
+              >
+                ADMIN PASSWORD
+              </label>
+              <div className="relative mt-2">
+                <Lock
+                  className="pointer-events-none absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-violet-400"
+                  aria-hidden="true"
+                />
+                <input
+                  id="admin-password-input"
+                  type={showPassword ? 'text' : 'password'}
+                  autoComplete="current-password"
+                  value={adminPasswordInput}
+                  disabled={signingIn}
+                  onChange={(e) => {
+                    setAdminPasswordInput(e.target.value);
+                    if (loginError) setLoginError(null);
+                  }}
+                  placeholder="Enter Admin Password"
+                  className="min-h-[50px] w-full rounded-2xl border border-violet-500/25 bg-[#050409] pl-11 pr-12 text-sm text-white placeholder:text-slate-500 transition-colors focus:border-violet-400 focus:outline-none focus:ring-2 focus:ring-violet-500/20 disabled:opacity-60"
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword((prev) => !prev)}
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  className="absolute right-3 top-1/2 flex h-8 w-8 -translate-y-1/2 items-center justify-center rounded-lg text-slate-400 transition-colors hover:bg-white/10 hover:text-white"
+                >
+                  {showPassword ? (
+                    <EyeOff className="h-4 w-4" aria-hidden="true" />
+                  ) : (
+                    <Eye className="h-4 w-4" aria-hidden="true" />
+                  )}
+                </button>
+              </div>
+            </div>
+
+            {loginError && (
+              <div
+                role="alert"
+                className="rounded-xl border border-rose-500/35 bg-rose-500/10 px-3.5 py-2.5 text-xs text-rose-300"
+              >
+                {loginError}
+              </div>
+            )}
+
             <button
-              type="button"
+              type="submit"
               disabled={signingIn}
-              onClick={() => void handleGoogleSignIn()}
-              className="btn-purple-glow flex min-h-[54px] w-full items-center justify-center gap-2.5 rounded-2xl px-6 text-sm font-bold tracking-wide text-white disabled:opacity-70"
+              className="btn-purple-glow mt-2 flex min-h-[54px] w-full items-center justify-center gap-2.5 rounded-2xl px-6 text-sm font-bold tracking-wider text-white disabled:opacity-70"
             >
               {signingIn ? (
                 <>
@@ -426,12 +545,12 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
                 </>
               ) : (
                 <>
-                  <ShieldCheck className="h-4 w-4" aria-hidden="true" />
-                  <span>SIGN IN WITH GOOGLE</span>
+                  <Lock className="h-4 w-4" aria-hidden="true" />
+                  <span>LOGIN</span>
                 </>
               )}
             </button>
-          </div>
+          </form>
 
           <div className="mt-5 text-center">
             <button
@@ -440,6 +559,98 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
               className="text-xs text-slate-400 transition-colors hover:text-white"
             >
               Return to IndoXDPro Portal
+            </button>
+          </div>
+        </section>
+      </main>
+    );
+  }
+
+  // --- Signed In With Email/Password But Email Not Verified Yet ---
+  if (!user.emailVerified) {
+    return (
+      <main className="relative flex min-h-[calc(100vh-8rem)] w-full items-center justify-center overflow-hidden px-4 py-12">
+        <section
+          aria-label="Administrator Email Verification Required"
+          className="relative w-full max-w-[460px] rounded-3xl border border-violet-500/25 bg-[#0A0812]/95 p-6 text-center shadow-[0_24px_80px_rgba(0,0,0,0.85)] sm:p-8"
+        >
+          <div className="mx-auto mb-3.5 flex h-12 w-12 items-center justify-center rounded-2xl border border-violet-500/35 bg-violet-500/15 text-violet-300">
+            <MailCheck className="h-6 w-6" aria-hidden="true" />
+          </div>
+          <h1 className="font-display text-xl font-bold text-white">
+            Verify Administrator Email
+          </h1>
+          <p className="mt-2 text-sm text-slate-400">
+            Firestore Security Rules require a verified email before unlocking administrator
+            operations.
+          </p>
+
+          <div className="mt-4 rounded-xl border border-white/[0.08] bg-[#050409] p-3.5 text-left text-xs">
+            <div className="flex items-center justify-between gap-2 text-slate-400">
+              <span>Account</span>
+              <span className="font-mono text-slate-200">{user.email ?? 'Unknown'}</span>
+            </div>
+          </div>
+
+          <div className="mt-5 space-y-2.5">
+            <button
+              type="button"
+              disabled={sendingVerification}
+              onClick={async () => {
+                setSendingVerification(true);
+                try {
+                  await sendAdminVerificationEmail();
+                } finally {
+                  setSendingVerification(false);
+                }
+              }}
+              className="btn-purple-glow flex min-h-[44px] w-full items-center justify-center gap-2 rounded-xl px-4 text-sm font-semibold text-white disabled:opacity-60"
+            >
+              {sendingVerification ? (
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+              ) : (
+                <MailCheck className="h-4 w-4" aria-hidden="true" />
+              )}
+              <span>Send Verification Email</span>
+            </button>
+
+            <button
+              type="button"
+              disabled={refreshingSession}
+              onClick={async () => {
+                setRefreshingSession(true);
+                try {
+                  await refreshAdminSession();
+                } finally {
+                  setRefreshingSession(false);
+                }
+              }}
+              className="flex min-h-[42px] w-full items-center justify-center gap-2 rounded-xl border border-violet-500/25 bg-violet-500/10 px-4 text-sm font-medium text-violet-200 hover:bg-violet-500/20 disabled:opacity-60"
+            >
+              {refreshingSession ? (
+                <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+              ) : (
+                <RefreshCw className="h-4 w-4" aria-hidden="true" />
+              )}
+              <span>I&apos;ve Verified — Refresh Status</span>
+            </button>
+          </div>
+
+          <div className="mt-4 flex flex-col gap-2.5 sm:flex-row">
+            <button
+              type="button"
+              onClick={() => void handleLogout()}
+              className="inline-flex min-h-[40px] flex-1 items-center justify-center gap-2 rounded-xl border border-rose-500/25 bg-rose-500/10 px-4 text-xs font-medium text-rose-200 hover:bg-rose-500/20"
+            >
+              <LogOut className="h-3.5 w-3.5" aria-hidden="true" />
+              <span>Sign Out</span>
+            </button>
+            <button
+              type="button"
+              onClick={onBackToDashboard}
+              className="inline-flex min-h-[40px] flex-1 items-center justify-center rounded-xl border border-white/12 bg-white/[0.04] px-4 text-xs font-medium text-slate-200 hover:bg-white/[0.08]"
+            >
+              Back to Portal
             </button>
           </div>
         </section>
@@ -569,6 +780,15 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
                 <span>Add Redeem Code</span>
               </button>
             )}
+
+            <button
+              type="button"
+              onClick={() => setAdminAccountsModalOpen(true)}
+              className="inline-flex min-h-[42px] items-center gap-2 rounded-xl border border-white/12 bg-white/[0.04] px-4 text-sm font-medium text-slate-200 hover:border-violet-400/40 hover:bg-violet-500/15"
+            >
+              <UserCheck className="h-4 w-4 text-violet-300" aria-hidden="true" />
+              <span>Admin IDs</span>
+            </button>
 
             <button
               type="button"
@@ -1663,6 +1883,22 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
             await deleteAdminRequest(deleteTarget.id);
           }
           showToast('Entry deleted', 'info', deleteTarget.label);
+        }}
+      />
+
+      {/* Admin IDs & Profiles Modal */}
+      <AdminAccountsModal
+        isOpen={adminAccountsModalOpen}
+        currentUid={user.uid}
+        mappings={adminIdMappings}
+        onClose={() => setAdminAccountsModalOpen(false)}
+        onSaveMapping={async (input) => {
+          await saveAdminIdMapping(user.uid, input);
+          showToast('Admin ID saved', 'success', input.adminId);
+        }}
+        onDeleteMapping={async (idKey) => {
+          await deleteAdminIdMapping(idKey);
+          showToast('Admin ID removed', 'info', idKey);
         }}
       />
     </main>

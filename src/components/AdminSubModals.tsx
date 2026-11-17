@@ -1,8 +1,24 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, Loader2, Search, Upload, X } from 'lucide-react';
+import {
+  AlertTriangle,
+  Loader2,
+  Plus,
+  Search,
+  ShieldCheck,
+  Trash2,
+  Upload,
+  X,
+} from 'lucide-react';
 import { COUNTRY_OPTIONS } from '../lib/countries';
 import { processFlagUpload } from '../lib/validation';
-import { FlagMode, IpCodeEntry, ManagedCountry, RedeemCodeEntry, ServerStatus } from '../types/vpn';
+import {
+  AdminIdMappingEntry,
+  FlagMode,
+  IpCodeEntry,
+  ManagedCountry,
+  RedeemCodeEntry,
+  ServerStatus,
+} from '../types/vpn';
 import { CountryFlag } from './CountryFlag';
 
 // --- Country Add/Edit Modal ---
@@ -823,6 +839,299 @@ export function ConfirmDeleteModal({
             {deleting && <Loader2 className="h-4 w-4 animate-spin" />}
             <span>Delete</span>
           </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// --- Admin IDs & Firebase Auth Account Mapping Modal ---
+interface AdminAccountsModalProps {
+  isOpen: boolean;
+  currentUid: string;
+  mappings: AdminIdMappingEntry[];
+  onClose: () => void;
+  onSaveMapping: (input: {
+    adminId: string;
+    authEmail: string;
+    uid?: string;
+    displayName?: string;
+    isActive: boolean;
+  }) => Promise<void>;
+  onDeleteMapping: (idKey: string) => Promise<void>;
+}
+
+export function AdminAccountsModal({
+  isOpen,
+  currentUid,
+  mappings,
+  onClose,
+  onSaveMapping,
+  onDeleteMapping,
+}: AdminAccountsModalProps) {
+  const [adminId, setAdminId] = useState('');
+  const [authEmail, setAuthEmail] = useState('');
+  const [uid, setUid] = useState('');
+  const [displayName, setDisplayName] = useState('');
+  const [isActive, setIsActive] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [deletingKey, setDeletingKey] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    setAdminId('');
+    setAuthEmail('');
+    setUid('');
+    setDisplayName('');
+    setIsActive(true);
+    setError(null);
+  }, [isOpen]);
+
+  if (!isOpen) return null;
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    setSaving(true);
+    try {
+      await onSaveMapping({
+        adminId,
+        authEmail,
+        uid,
+        displayName,
+        isActive,
+      });
+      setAdminId('');
+      setAuthEmail('');
+      setUid('');
+      setDisplayName('');
+      setIsActive(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to save Admin ID mapping.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div
+      role="dialog"
+      aria-modal="true"
+      aria-label="Admin ID Accounts"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 p-4 backdrop-blur-sm"
+    >
+      <div className="max-h-[90vh] w-full max-w-2xl overflow-y-auto rounded-2xl border border-violet-500/25 bg-[#0E0C16] p-6 shadow-2xl">
+        <div className="flex items-start justify-between gap-4 border-b border-white/[0.08] pb-4">
+          <div className="flex items-center gap-3">
+            <div className="flex h-10 w-10 items-center justify-center rounded-xl border border-violet-500/30 bg-violet-600/15 text-violet-300">
+              <ShieldCheck className="h-5 w-5" aria-hidden="true" />
+            </div>
+            <div>
+              <h2 className="font-display text-lg font-semibold text-white">
+                Authorized Admin IDs &amp; Profiles
+              </h2>
+              <p className="text-xs text-slate-400">
+                Map Admin IDs to Firebase Authentication Email/Password accounts. Passwords are
+                never stored in Firestore.
+              </p>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close Admin IDs modal"
+            className="rounded-lg p-1.5 text-slate-400 hover:bg-white/10 hover:text-white"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="mt-5 space-y-4 rounded-xl border border-white/10 bg-[#07060C] p-4">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-violet-300">
+            Add or Update Admin ID Mapping
+          </h3>
+
+          {error && (
+            <div className="rounded-xl border border-rose-500/35 bg-rose-500/10 px-3.5 py-2.5 text-xs text-rose-300">
+              {error}
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div>
+              <label htmlFor="map-admin-id" className="block text-xs font-medium text-slate-300">
+                Admin ID
+              </label>
+              <input
+                id="map-admin-id"
+                type="text"
+                value={adminId}
+                onChange={(e) => setAdminId(e.target.value)}
+                placeholder="e.g., ADMIN551"
+                className="mt-1.5 min-h-[40px] w-full rounded-xl border border-white/12 bg-[#050409] px-3 font-mono text-sm text-white placeholder:font-sans placeholder:text-slate-500 focus:border-violet-500 focus:outline-none"
+              />
+            </div>
+
+            <div>
+              <label htmlFor="map-auth-email" className="block text-xs font-medium text-slate-300">
+                Firebase Auth Email
+              </label>
+              <input
+                id="map-auth-email"
+                type="email"
+                value={authEmail}
+                onChange={(e) => setAuthEmail(e.target.value)}
+                placeholder="admin@example.com"
+                className="mt-1.5 min-h-[40px] w-full rounded-xl border border-white/12 bg-[#050409] px-3 text-sm text-white placeholder:text-slate-500 focus:border-violet-500 focus:outline-none"
+              />
+            </div>
+
+            <div>
+              <label htmlFor="map-uid" className="block text-xs font-medium text-slate-300">
+                Firebase Auth UID (optional for primary admin)
+              </label>
+              <input
+                id="map-uid"
+                type="text"
+                value={uid}
+                onChange={(e) => setUid(e.target.value)}
+                placeholder="Paste UID from Firebase Console"
+                className="mt-1.5 min-h-[40px] w-full rounded-xl border border-white/12 bg-[#050409] px-3 font-mono text-xs text-white placeholder:font-sans placeholder:text-slate-500 focus:border-violet-500 focus:outline-none"
+              />
+            </div>
+
+            <div>
+              <label htmlFor="map-display-name" className="block text-xs font-medium text-slate-300">
+                Display Name
+              </label>
+              <input
+                id="map-display-name"
+                type="text"
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                placeholder="Primary Administrator"
+                className="mt-1.5 min-h-[40px] w-full rounded-xl border border-white/12 bg-[#050409] px-3 text-sm text-white placeholder:text-slate-500 focus:border-violet-500 focus:outline-none"
+              />
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+            <label className="inline-flex cursor-pointer items-center gap-2 text-xs text-slate-300">
+              <input
+                type="checkbox"
+                checked={isActive}
+                onChange={(e) => setIsActive(e.target.checked)}
+                className="h-4 w-4 rounded border-white/20 bg-[#050409] accent-violet-600"
+              />
+              <span>Active Admin ID</span>
+            </label>
+
+            <button
+              type="submit"
+              disabled={saving}
+              className="btn-purple-glow inline-flex min-h-[38px] items-center gap-1.5 rounded-xl px-4 text-xs font-semibold text-white disabled:opacity-60"
+            >
+              {saving ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Plus className="h-3.5 w-3.5" />
+              )}
+              <span>Save Admin ID</span>
+            </button>
+          </div>
+        </form>
+
+        <div className="mt-5">
+          <h3 className="mb-2.5 text-xs font-semibold uppercase tracking-wider text-slate-400">
+            Configured Admin IDs ({mappings.length})
+          </h3>
+          {mappings.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-white/12 bg-[#07060C] p-6 text-center text-xs text-slate-400">
+              No Admin ID mappings found yet.
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {mappings.map((item) => {
+                const isSelf = item.uid === currentUid;
+                return (
+                  <div
+                    key={item.idKey}
+                    className="flex flex-col justify-between gap-3 rounded-xl border border-white/10 bg-[#07060C] p-3.5 sm:flex-row sm:items-center"
+                  >
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-mono text-sm font-semibold text-white">
+                          {item.adminId}
+                        </span>
+                        <span
+                          className={`rounded-md border px-2 py-0.5 text-[11px] font-medium ${
+                            item.isActive
+                              ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
+                              : 'border-white/12 bg-white/[0.04] text-slate-400'
+                          }`}
+                        >
+                          {item.isActive ? 'Active' : 'Inactive'}
+                        </span>
+                        {isSelf && (
+                          <span className="rounded-md border border-violet-500/30 bg-violet-500/15 px-2 py-0.5 text-[11px] font-medium text-violet-300">
+                            Current Session
+                          </span>
+                        )}
+                      </div>
+                      <p className="mt-1 truncate text-xs text-slate-300">
+                        {item.authEmail}
+                        {item.displayName ? ` · ${item.displayName}` : ''}
+                      </p>
+                      {item.uid && (
+                        <p className="mt-0.5 truncate font-mono text-[11px] text-slate-500">
+                          UID: {item.uid}
+                        </p>
+                      )}
+                    </div>
+
+                    <div className="flex shrink-0 items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setAdminId(item.adminId);
+                          setAuthEmail(item.authEmail);
+                          setUid(item.uid);
+                          setDisplayName(item.displayName);
+                          setIsActive(item.isActive);
+                        }}
+                        className="min-h-[32px] rounded-lg border border-white/12 bg-white/[0.04] px-3 text-xs font-medium text-slate-200 hover:border-violet-400/40 hover:bg-violet-500/15"
+                      >
+                        Edit
+                      </button>
+                      {!isSelf && (
+                        <button
+                          type="button"
+                          disabled={deletingKey === item.idKey}
+                          onClick={async () => {
+                            setDeletingKey(item.idKey);
+                            try {
+                              await onDeleteMapping(item.idKey);
+                            } finally {
+                              setDeletingKey(null);
+                            }
+                          }}
+                          className="inline-flex min-h-[32px] items-center gap-1 rounded-lg border border-rose-500/25 bg-rose-500/10 px-2.5 text-xs font-medium text-rose-300 hover:bg-rose-500/20 disabled:opacity-60"
+                        >
+                          {deletingKey === item.idKey ? (
+                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          ) : (
+                            <Trash2 className="h-3.5 w-3.5" />
+                          )}
+                          <span>Remove</span>
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       </div>
     </div>

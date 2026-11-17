@@ -102,8 +102,24 @@ export interface ConnectionRequestLog {
 export interface AdminRecord {
   uid: string;
   email: string;
+  adminId?: string;
+  displayName?: string;
+  role?: 'Admin' | 'SuperAdmin';
+  isActive?: boolean;
   addedBy: string;
   createdAt: Timestamp | null;
+}
+
+export interface AdminIdMappingEntry {
+  idKey: string;
+  adminId: string;
+  authEmail: string;
+  uid: string;
+  displayName: string;
+  isActive: boolean;
+  updatedBy: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface ValidationErrors {
