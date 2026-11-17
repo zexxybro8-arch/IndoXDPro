@@ -1,5 +1,81 @@
 {
   "entities": {
+    "Country": {
+      "title": "Country",
+      "description": "Country option with ISO or custom flag displayed in the IndoXDPro homepage selector and managed by admins.",
+      "type": "object",
+      "properties": {
+        "countryId": {
+          "type": "string",
+          "description": "Unique identifier for the country record.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_-]+$"
+        },
+        "name": {
+          "type": "string",
+          "description": "Display name of the country.",
+          "minLength": 2,
+          "maxLength": 80
+        },
+        "code": {
+          "type": "string",
+          "description": "ISO 3166-1 alpha-2 code for preset flags, or empty string for uploaded flags.",
+          "minLength": 0,
+          "maxLength": 10,
+          "pattern": "^([A-Z]{2}(-[A-Z]{2,3})?)?$"
+        },
+        "keywords": {
+          "type": "string",
+          "description": "Optional comma/space separated search aliases.",
+          "minLength": 0,
+          "maxLength": 200
+        },
+        "flagMode": {
+          "type": "string",
+          "description": "Flag source mode.",
+          "enum": ["preset", "upload"]
+        },
+        "flagDataUrl": {
+          "type": "string",
+          "description": "Base64 data URL for uploaded custom flag.",
+          "minLength": 0,
+          "maxLength": 120000
+        },
+        "isActive": {
+          "type": "boolean",
+          "description": "Whether the country appears in the public homepage dropdown."
+        },
+        "createdBy": {
+          "type": "string",
+          "description": "Firebase Auth UID of the administrator who created the country.",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the country was created."
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the country was last updated."
+        }
+      },
+      "required": [
+        "countryId",
+        "name",
+        "code",
+        "keywords",
+        "flagMode",
+        "flagDataUrl",
+        "isActive",
+        "createdBy",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
     "VpnServer": {
       "title": "VpnServer",
       "description": "A country-specific VPN server entry managed by an administrator.",
@@ -7,7 +83,7 @@
       "properties": {
         "countryName": {
           "type": "string",
-          "description": "Display name of the VPN country (e.g., Germany, Japan, United States).",
+          "description": "Display name of the VPN country.",
           "minLength": 2,
           "maxLength": 80
         },
@@ -25,7 +101,7 @@
         },
         "flagDataUrl": {
           "type": "string",
-          "description": "Base64 data URL for a custom uploaded flag image (empty when flagMode is preset).",
+          "description": "Base64 data URL for a custom uploaded flag image.",
           "minLength": 0,
           "maxLength": 120000
         },
@@ -38,7 +114,7 @@
         },
         "ipCode": {
           "type": "string",
-          "description": "Access code, port configuration, or node identifier associated with the IP address.",
+          "description": "Access code or node identifier associated with the IP address.",
           "minLength": 1,
           "maxLength": 64,
           "pattern": "^[a-zA-Z0-9_.:/\\-]+$"
@@ -62,7 +138,7 @@
         },
         "notes": {
           "type": "string",
-          "description": "Additional instructions or configuration notes for users.",
+          "description": "Additional instructions or configuration notes.",
           "minLength": 0,
           "maxLength": 500
         },
@@ -106,7 +182,7 @@
       "properties": {
         "codeId": {
           "type": "string",
-          "description": "Unique identifier for the redeem code record.",
+          "description": "Deterministic identifier for the redeem code record.",
           "minLength": 1,
           "maxLength": 128,
           "pattern": "^[a-zA-Z0-9_-]+$"
@@ -117,6 +193,12 @@
           "minLength": 2,
           "maxLength": 64,
           "pattern": "^[a-zA-Z0-9_-]+$"
+        },
+        "label": {
+          "type": "string",
+          "description": "Optional admin label or note.",
+          "minLength": 0,
+          "maxLength": 100
         },
         "balance": {
           "type": "number",
@@ -131,7 +213,13 @@
           "type": "string",
           "description": "Optional expiry date (YYYY-MM-DD) or empty string if no expiry.",
           "minLength": 0,
-          "maxLength": 32
+          "maxLength": 32,
+          "pattern": "^(\\d{4}-\\d{2}-\\d{2})?$"
+        },
+        "expiresAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server-enforced expiration cutoff timestamp."
         },
         "redemptionStatus": {
           "type": "string",
@@ -181,7 +269,7 @@
       "properties": {
         "codeId": {
           "type": "string",
-          "description": "Unique identifier for the IP Code record.",
+          "description": "Deterministic base64url identifier for the IP Code record.",
           "minLength": 1,
           "maxLength": 128,
           "pattern": "^[a-zA-Z0-9_-]+$"
@@ -231,9 +319,102 @@
         "updatedAt"
       ]
     },
+    "ConnectionRequest": {
+      "title": "ConnectionRequest",
+      "description": "Audit log of VPN connection submissions verified against Firestore IP Codes and Redeem Codes.",
+      "type": "object",
+      "properties": {
+        "requestId": {
+          "type": "string",
+          "description": "Unique identifier for the connection request log.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_-]+$"
+        },
+        "countryName": {
+          "type": "string",
+          "description": "Selected country name.",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "countryCode": {
+          "type": "string",
+          "description": "Selected country code.",
+          "minLength": 0,
+          "maxLength": 10
+        },
+        "ipAddress": {
+          "type": "string",
+          "description": "Entered IPv4 or IPv6 address.",
+          "minLength": 3,
+          "maxLength": 64,
+          "pattern": "^[a-zA-Z0-9.:-]+$"
+        },
+        "redeemCodeId": {
+          "type": "string",
+          "description": "Document ID of the redeem code checked.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_-]+$"
+        },
+        "redeemCode": {
+          "type": "string",
+          "description": "Entered redeem code.",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "ipCodeId": {
+          "type": "string",
+          "description": "Document ID of the IP code checked.",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_-]+$"
+        },
+        "ipCode": {
+          "type": "string",
+          "description": "Entered IP code.",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "balance": {
+          "type": "number",
+          "description": "Authoritative INR balance redeemed on successful connection (0 if rejected)."
+        },
+        "resultStatus": {
+          "type": "string",
+          "description": "Outcome of the connection submission.",
+          "enum": ["Connected", "Rejected"]
+        },
+        "statusReason": {
+          "type": "string",
+          "description": "Human-readable verification outcome.",
+          "minLength": 0,
+          "maxLength": 240
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "Server timestamp when the request was submitted."
+        }
+      },
+      "required": [
+        "requestId",
+        "countryName",
+        "countryCode",
+        "ipAddress",
+        "redeemCodeId",
+        "redeemCode",
+        "ipCodeId",
+        "ipCode",
+        "balance",
+        "resultStatus",
+        "statusReason",
+        "createdAt"
+      ]
+    },
     "AdminUser": {
       "title": "AdminUser",
-      "description": "Authorized administrator record granting access to manage VPN server entries and redeem codes.",
+      "description": "Authorized administrator record granting access to manage IndoXDPro Firestore collections.",
       "type": "object",
       "properties": {
         "uid": {
@@ -264,21 +445,29 @@
     }
   },
   "firestore": {
+    "/countries/{countryId}": {
+      "schema": { "$ref": "#/entities/Country" },
+      "description": "Selectable VPN portal countries with flags, managed by admins."
+    },
     "/vpn_servers/{serverId}": {
       "schema": { "$ref": "#/entities/VpnServer" },
-      "description": "VPN server entries written exclusively by authenticated, verified administrators."
+      "description": "Private admin-managed VPN server entries and optional credentials."
     },
     "/redeem_codes/{codeId}": {
       "schema": { "$ref": "#/entities/RedeemCode" },
-      "description": "Admin-managed redeem codes with INR balance, expiry date, and atomic redemption status."
+      "description": "Admin-managed redeem codes with INR balance, expiry cutoff, and atomic transaction redemption."
     },
     "/ip_codes/{ipCodeId}": {
       "schema": { "$ref": "#/entities/IpCode" },
       "description": "Admin-managed IP Codes required for VPN connection verification."
     },
+    "/connection_requests/{requestId}": {
+      "schema": { "$ref": "#/entities/ConnectionRequest" },
+      "description": "Submitted VPN connection verification logs."
+    },
     "/admins/{adminUid}": {
       "schema": { "$ref": "#/entities/AdminUser" },
-      "description": "Protected registry of authorized administrator UIDs. Readable only by the owner UID or existing admins; writable only by existing admins."
+      "description": "Protected registry of authorized administrator UIDs."
     }
   }
 }

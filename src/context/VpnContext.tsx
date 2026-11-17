@@ -11,11 +11,8 @@ import {
   doc,
   getDoc,
   onSnapshot,
-  query,
   serverTimestamp,
   setDoc,
-  updateDoc,
-  where,
 } from 'firebase/firestore';
 import {
   BOOTSTRAPPED_ADMIN_EMAIL,
@@ -25,13 +22,13 @@ import {
   googleProvider,
   handleFirestoreError,
 } from '../lib/firebase';
-import { sanitizeVpnInput, validateVpnInput } from '../lib/validation';
-import { AdminRecord, ServerStatus, ToastItem, VpnServer, VpnServerInput } from '../types/vpn';
+import { subscribePortalCountries } from '../lib/firestorePortal';
+import { COUNTRY_OPTIONS } from '../lib/countries';
+import { AdminRecord, ManagedCountry, ToastItem } from '../types/vpn';
 
 interface VpnContextValue {
-  servers: VpnServer[];
-  serversLoading: boolean;
-  serversError: string | null;
+  portalCountries: ManagedCountry[];
+  countriesLoading: boolean;
   user: User | null;
   authLoading: boolean;
   isAdmin: boolean;
@@ -42,27 +39,25 @@ interface VpnContextValue {
   dismissToast: (id: string) => void;
   signInWithGoogle: () => Promise<void>;
   signOutUser: () => Promise<void>;
-  createServer: (input: VpnServerInput) => Promise<void>;
-  updateServer: (id: string, input: VpnServerInput) => Promise<void>;
-  toggleServerStatus: (id: string, currentStatus: ServerStatus) => Promise<void>;
-  deleteServer: (id: string) => Promise<void>;
   addAdmin: (uid: string, email: string) => Promise<void>;
   removeAdmin: (uid: string) => Promise<void>;
 }
 
 const VpnContext = createContext<VpnContextValue | null>(null);
 
-function generateDocId(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
-    return crypto.randomUUID().replace(/-/g, '').slice(0, 20);
-  }
-  return `srv_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 10)}`;
-}
+const FALLBACK_COUNTRIES: ManagedCountry[] = COUNTRY_OPTIONS.map((c) => ({
+  id: `cty_${c.code.toLowerCase()}`,
+  name: c.name,
+  code: c.code,
+  keywords: c.keywords ?? '',
+  flagMode: 'preset',
+  flagDataUrl: '',
+  isActive: true,
+}));
 
 export function VpnProvider({ children }: { children: React.ReactNode }) {
-  const [servers, setServers] = useState<VpnServer[]>([]);
-  const [serversLoading, setServersLoading] = useState(true);
-  const [serversError, setServersError] = useState<string | null>(null);
+  const [portalCountries, setPortalCountries] = useState<ManagedCountry[]>(FALLBACK_COUNTRIES);
+  const [countriesLoading, setCountriesLoading] = useState(true);
 
   const [user, setUser] = useState<User | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -87,7 +82,7 @@ export function VpnProvider({ children }: { children: React.ReactNode }) {
     setToasts((prev) => prev.filter((item) => item.id !== id));
   }, []);
 
-  // Auth & Admin status check
+  // Firebase Auth & Verified Admin status check
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       setUser(firebaseUser);
@@ -129,52 +124,22 @@ export function VpnProvider({ children }: { children: React.ReactNode }) {
     return () => unsubscribe();
   }, []);
 
-  // Real-time VPN servers listener (publicly readable; changes reflect instantly)
+  // Real-time active countries listener for the user homepage
   useEffect(() => {
-    const vpnQuery = query(
-      collection(db, 'vpn_servers'),
-      where('status', 'in', ['Active', 'Inactive'])
-    );
-
-    const unsubscribe = onSnapshot(
-      vpnQuery,
-      (snapshot) => {
-        const next: VpnServer[] = snapshot.docs.map((docSnap) => {
-          const data = docSnap.data();
-          return {
-            id: docSnap.id,
-            countryName: String(data.countryName ?? ''),
-            countryCode: String(data.countryCode ?? ''),
-            flagMode: data.flagMode === 'upload' ? 'upload' : 'preset',
-            flagDataUrl: String(data.flagDataUrl ?? ''),
-            ipAddress: String(data.ipAddress ?? ''),
-            ipCode: String(data.ipCode ?? ''),
-            status: data.status === 'Inactive' ? 'Inactive' : 'Active',
-            username: String(data.username ?? ''),
-            password: String(data.password ?? ''),
-            notes: String(data.notes ?? ''),
-            createdBy: String(data.createdBy ?? ''),
-            createdAt: data.createdAt ?? null,
-            updatedAt: data.updatedAt ?? null,
-          };
-        });
-
-        next.sort((a, b) => a.countryName.localeCompare(b.countryName));
-        setServers(next);
-        setServersLoading(false);
-        setServersError(null);
+    const unsubscribe = subscribePortalCountries(
+      (list) => {
+        setPortalCountries(list);
+        setCountriesLoading(false);
       },
-      (error) => {
-        setServersLoading(false);
-        setServersError('Unable to load VPN server directory.');
-        handleFirestoreError(error, OperationType.LIST, 'vpn_servers');
+      () => {
+        setCountriesLoading(false);
       }
     );
 
     return () => unsubscribe();
   }, []);
 
-  // Real-time admins list (only when signed in as verified admin)
+  // Real-time admins list (only attached when authenticated as verified admin)
   useEffect(() => {
     if (!user || !isAdmin) {
       setAdmins([]);
@@ -235,114 +200,12 @@ export function VpnProvider({ children }: { children: React.ReactNode }) {
   const signOutUser = useCallback(async () => {
     try {
       await signOut(auth);
-      showToast('Signed out from Admin Console', 'info');
+      showToast('Signed out from Admin Panel', 'info');
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Sign-out failed.';
       showToast('Unable to sign out', 'error', message);
     }
   }, [showToast]);
-
-  const createServer = useCallback(
-    async (rawInput: VpnServerInput) => {
-      if (!user || !isAdmin) {
-        throw new Error('Administrator authentication is required.');
-      }
-
-      const { isValid, errors, sanitized } = validateVpnInput(rawInput);
-      if (!isValid) {
-        const firstError = Object.values(errors)[0] || 'Invalid input fields.';
-        throw new Error(firstError);
-      }
-
-      const id = generateDocId();
-      const docRef = doc(db, 'vpn_servers', id);
-      try {
-        await setDoc(docRef, {
-          ...sanitized,
-          createdBy: user.uid,
-          createdAt: serverTimestamp(),
-          updatedAt: serverTimestamp(),
-        });
-        showToast('VPN country added', 'success', `${sanitized.countryName} · ${sanitized.ipAddress}`);
-      } catch (error) {
-        handleFirestoreError(error, OperationType.CREATE, `vpn_servers/${id}`);
-      }
-    },
-    [user, isAdmin, showToast]
-  );
-
-  const updateServer = useCallback(
-    async (id: string, rawInput: VpnServerInput) => {
-      if (!user || !isAdmin) {
-        throw new Error('Administrator authentication is required.');
-      }
-
-      const { isValid, errors, sanitized } = validateVpnInput(rawInput);
-      if (!isValid) {
-        const firstError = Object.values(errors)[0] || 'Invalid input fields.';
-        throw new Error(firstError);
-      }
-
-      const docRef = doc(db, 'vpn_servers', id);
-      try {
-        await updateDoc(docRef, {
-          countryName: sanitized.countryName,
-          countryCode: sanitized.countryCode,
-          flagMode: sanitized.flagMode,
-          flagDataUrl: sanitized.flagDataUrl,
-          ipAddress: sanitized.ipAddress,
-          ipCode: sanitized.ipCode,
-          status: sanitized.status,
-          username: sanitized.username,
-          password: sanitized.password,
-          notes: sanitized.notes,
-          updatedAt: serverTimestamp(),
-        });
-        showToast('VPN entry updated', 'success', `${sanitized.countryName} · ${sanitized.ipAddress}`);
-      } catch (error) {
-        handleFirestoreError(error, OperationType.UPDATE, `vpn_servers/${id}`);
-      }
-    },
-    [user, isAdmin, showToast]
-  );
-
-  const toggleServerStatus = useCallback(
-    async (id: string, currentStatus: ServerStatus) => {
-      if (!user || !isAdmin) {
-        throw new Error('Administrator authentication is required.');
-      }
-
-      const nextStatus: ServerStatus = currentStatus === 'Active' ? 'Inactive' : 'Active';
-      const docRef = doc(db, 'vpn_servers', id);
-      try {
-        await updateDoc(docRef, {
-          status: nextStatus,
-          updatedAt: serverTimestamp(),
-        });
-        showToast(`Server marked ${nextStatus}`, 'success');
-      } catch (error) {
-        handleFirestoreError(error, OperationType.UPDATE, `vpn_servers/${id}`);
-      }
-    },
-    [user, isAdmin, showToast]
-  );
-
-  const deleteServer = useCallback(
-    async (id: string) => {
-      if (!user || !isAdmin) {
-        throw new Error('Administrator authentication is required.');
-      }
-
-      const docRef = doc(db, 'vpn_servers', id);
-      try {
-        await deleteDoc(docRef);
-        showToast('VPN entry deleted', 'info');
-      } catch (error) {
-        handleFirestoreError(error, OperationType.DELETE, `vpn_servers/${id}`);
-      }
-    },
-    [user, isAdmin, showToast]
-  );
 
   const addAdmin = useCallback(
     async (uidInput: string, emailInput: string) => {
@@ -396,9 +259,8 @@ export function VpnProvider({ children }: { children: React.ReactNode }) {
 
   const value = useMemo<VpnContextValue>(
     () => ({
-      servers,
-      serversLoading,
-      serversError,
+      portalCountries,
+      countriesLoading,
       user,
       authLoading,
       isAdmin,
@@ -409,17 +271,12 @@ export function VpnProvider({ children }: { children: React.ReactNode }) {
       dismissToast,
       signInWithGoogle,
       signOutUser,
-      createServer,
-      updateServer,
-      toggleServerStatus,
-      deleteServer,
       addAdmin,
       removeAdmin,
     }),
     [
-      servers,
-      serversLoading,
-      serversError,
+      portalCountries,
+      countriesLoading,
       user,
       authLoading,
       isAdmin,
@@ -430,10 +287,6 @@ export function VpnProvider({ children }: { children: React.ReactNode }) {
       dismissToast,
       signInWithGoogle,
       signOutUser,
-      createServer,
-      updateServer,
-      toggleServerStatus,
-      deleteServer,
       addAdmin,
       removeAdmin,
     ]
@@ -449,5 +302,3 @@ export function useVpn() {
   }
   return ctx;
 }
-
-export { sanitizeVpnInput };

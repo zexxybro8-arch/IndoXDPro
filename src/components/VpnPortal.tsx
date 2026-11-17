@@ -14,11 +14,10 @@ import {
 } from 'lucide-react';
 import { useVpn } from '../context/VpnContext';
 import {
-  fetchPortalCountries,
   submitPortalConnection,
   verifyPortalIpCode,
   verifyPortalRedeemCode,
-} from '../lib/adminApi';
+} from '../lib/firestorePortal';
 import { PortalValidationErrors, validatePortalFields } from '../lib/validation';
 import { CountrySelect, SelectableCountry } from './CountrySelect';
 
@@ -41,9 +40,9 @@ function formatInr(amount: number): string {
 }
 
 export function VpnPortal() {
-  const { servers, showToast } = useVpn();
+  const { portalCountries, showToast } = useVpn();
 
-  const [countries, setCountries] = useState<SelectableCountry[]>([]);
+  const countries = portalCountries;
   const [selectedCountry, setSelectedCountry] = useState<SelectableCountry | null>(null);
   const [ipAddress, setIpAddress] = useState('');
   const [redeemCode, setRedeemCode] = useState('');
@@ -64,20 +63,17 @@ export function VpnPortal() {
   } | null>(null);
 
   useEffect(() => {
-    let active = true;
-    fetchPortalCountries()
-      .then((list) => {
-        if (active && list.length > 0) {
-          setCountries(list);
-        }
-      })
-      .catch(() => {
-        // Fallback to built-in catalog inside CountrySelect
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
+    if (!selectedCountry) return;
+    const stillActive = countries.find(
+      (c) =>
+        (c.id && selectedCountry.id && c.id === selectedCountry.id) ||
+        (c.code && selectedCountry.code && c.code === selectedCountry.code) ||
+        c.name === selectedCountry.name
+    );
+    if (!stillActive) {
+      setSelectedCountry(null);
+    }
+  }, [countries, selectedCountry]);
 
   const runRedeemVerification = async (rawCode: string) => {
     const trimmed = rawCode.trim();
@@ -228,29 +224,7 @@ export function VpnPortal() {
       const countryName = selectedCountry?.name ?? '';
       const countryCode = selectedCountry?.code || countryName.slice(0, 2).toUpperCase();
 
-      // Check Firestore vpn_servers if matching entry exists
-      const firestoreMatch = servers.find(
-        (srv) => srv.ipAddress.toLowerCase() === cleanIp.toLowerCase()
-      );
-      if (firestoreMatch && firestoreMatch.status === 'Inactive') {
-        setConnectedEndpoint(null);
-        showToast(
-          'Endpoint currently inactive',
-          'error',
-          `${firestoreMatch.countryName} · ${cleanIp}`
-        );
-        return;
-      }
-      if (
-        firestoreMatch &&
-        firestoreMatch.ipCode.toLowerCase() !== cleanCode.toLowerCase()
-      ) {
-        setErrors({ ipCode: 'IP Code does not match the registered server endpoint.' });
-        showToast('Invalid IP Code', 'error', 'Verify the IP Code for this server address.');
-        return;
-      }
-
-      // Submit & atomically verify/redeem against backend database
+      // Atomically verify IP Code & Redeem Code and redeem via Firestore transaction
       const connection = await submitPortalConnection({
         countryCode,
         countryName,

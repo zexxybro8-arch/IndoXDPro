@@ -65,7 +65,7 @@ export function handleFirestoreError(
 
 async function testConnection() {
   try {
-    await getDocFromServer(doc(db, 'vpn_servers', 'connection_check'));
+    await getDocFromServer(doc(db, 'countries', 'connection_check'));
   } catch (error) {
     if (error instanceof Error && error.message.includes('the client is offline')) {
       console.error('Please check your Firebase configuration.');

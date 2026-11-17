@@ -1,12 +1,10 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import {
   Activity,
   Check,
   CheckCircle2,
   Copy,
   Edit3,
-  Eye,
-  EyeOff,
   Globe2,
   KeyRound,
   Loader2,
@@ -15,17 +13,14 @@ import {
   Network,
   Plus,
   PowerOff,
-  RefreshCw,
   Search,
   ShieldAlert,
   ShieldCheck,
   Ticket,
   Trash2,
-  UserCheck,
 } from 'lucide-react';
 import { useVpn } from '../context/VpnContext';
 import {
-  checkAdminSession,
   createAdminCountry,
   createAdminIpCode,
   createAdminRedeemCode,
@@ -35,13 +30,12 @@ import {
   deleteAdminRedeemCode,
   deleteAdminRequest,
   deleteAdminVpnEntry,
-  fetchAdminCountries,
-  fetchAdminIpCodes,
-  fetchAdminRedeemCodes,
-  fetchAdminRequests,
-  fetchAdminVpnEntries,
-  loginAdmin,
-  logoutAdmin,
+  seedCountriesIfEmpty,
+  subscribeAdminCountries,
+  subscribeAdminIpCodes,
+  subscribeAdminRedeemCodes,
+  subscribeAdminRequests,
+  subscribeAdminVpnEntries,
   toggleAdminIpCodeStatus,
   toggleAdminRedeemCodeStatus,
   toggleAdminVpnEntryStatus,
@@ -49,7 +43,7 @@ import {
   updateAdminIpCode,
   updateAdminRedeemCode,
   updateAdminVpnEntry,
-} from '../lib/adminApi';
+} from '../lib/firestorePortal';
 import {
   ConnectionRequestLog,
   FlagMode,
@@ -77,20 +71,19 @@ interface AdminPanelProps {
 type AdminTab = 'vpn' | 'countries' | 'ipcodes' | 'redeem' | 'requests';
 
 export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
-  const { showToast } = useVpn();
+  const {
+    user,
+    authLoading,
+    isAdmin,
+    adminCheckLoading,
+    signInWithGoogle,
+    signOutUser,
+    showToast,
+  } = useVpn();
 
-  // Server-side Admin Auth State (zero hardcoded credentials in frontend)
-  const [sessionChecking, setSessionChecking] = useState(true);
-  const [authenticatedAdminId, setAuthenticatedAdminId] = useState<string | null>(null);
+  const [signingIn, setSigningIn] = useState(false);
 
-  // Login Form State
-  const [adminIdInput, setAdminIdInput] = useState('');
-  const [passwordInput, setPasswordInput] = useState('');
-  const [showPassword, setShowPassword] = useState(false);
-  const [loginError, setLoginError] = useState<string | null>(null);
-  const [loggingIn, setLoggingIn] = useState(false);
-
-  // Dashboard Data State
+  // Dashboard Data State (synced live via Firestore onSnapshot)
   const [activeTab, setActiveTab] = useState<AdminTab>('vpn');
   const [loadingData, setLoadingData] = useState(false);
   const [vpnEntries, setVpnEntries] = useState<ManagedVpnEntry[]>([]);
@@ -140,92 +133,72 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
     label: string;
   } | null>(null);
 
-  const loadAllAdminData = useCallback(async () => {
-    setLoadingData(true);
-    try {
-      const [entriesRes, countriesRes, ipCodesRes, redeemRes, requestsRes] = await Promise.all([
-        fetchAdminVpnEntries(),
-        fetchAdminCountries(),
-        fetchAdminIpCodes(),
-        fetchAdminRedeemCodes(),
-        fetchAdminRequests(),
-      ]);
-      setVpnEntries(entriesRes);
-      setCountries(countriesRes);
-      setIpCodes(ipCodesRes);
-      setRedeemCodes(redeemRes);
-      setRequests(requestsRes);
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Unable to load admin records.';
-      showToast('Failed to load admin data', 'error', message);
-    } finally {
+  // Attach real-time Firestore listeners only after verified admin authentication
+  useEffect(() => {
+    if (!user || !isAdmin) {
+      setVpnEntries([]);
+      setCountries([]);
+      setIpCodes([]);
+      setRedeemCodes([]);
+      setRequests([]);
       setLoadingData(false);
-    }
-  }, [showToast]);
-
-  // Verify existing server-side session on mount
-  useEffect(() => {
-    let active = true;
-    checkAdminSession()
-      .then((res) => {
-        if (!active) return;
-        if (res.authenticated && res.adminId) {
-          setAuthenticatedAdminId(res.adminId);
-        } else {
-          setAuthenticatedAdminId(null);
-        }
-      })
-      .finally(() => {
-        if (active) setSessionChecking(false);
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
-
-  useEffect(() => {
-    if (authenticatedAdminId) {
-      void loadAllAdminData();
-    }
-  }, [authenticatedAdminId, loadAllAdminData]);
-
-  const handleLoginSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoginError(null);
-
-    const trimmedId = adminIdInput.trim();
-    if (!trimmedId || !passwordInput) {
-      const msg = 'Please enter both Admin ID and Password.';
-      setLoginError(msg);
-      showToast('Authentication failed', 'error', msg);
       return;
     }
 
-    setLoggingIn(true);
+    setLoadingData(true);
+    let readyCount = 0;
+    const markReady = () => {
+      readyCount += 1;
+      if (readyCount >= 5) {
+        setLoadingData(false);
+      }
+    };
+
+    void seedCountriesIfEmpty(user.uid).catch(() => {
+      // Handled via Firestore error boundary if unauthorized
+    });
+
+    const unsubVpn = subscribeAdminVpnEntries((list) => {
+      setVpnEntries(list);
+      markReady();
+    });
+    const unsubCountries = subscribeAdminCountries((list) => {
+      setCountries(list);
+      markReady();
+    });
+    const unsubIpCodes = subscribeAdminIpCodes((list) => {
+      setIpCodes(list);
+      markReady();
+    });
+    const unsubRedeem = subscribeAdminRedeemCodes((list) => {
+      setRedeemCodes(list);
+      markReady();
+    });
+    const unsubRequests = subscribeAdminRequests((list) => {
+      setRequests(list);
+      markReady();
+    });
+
+    return () => {
+      unsubVpn();
+      unsubCountries();
+      unsubIpCodes();
+      unsubRedeem();
+      unsubRequests();
+    };
+  }, [user, isAdmin]);
+
+  const handleGoogleSignIn = async () => {
+    setSigningIn(true);
     try {
-      const result = await loginAdmin(trimmedId, passwordInput);
-      setAuthenticatedAdminId(result.adminId);
-      setPasswordInput('');
-      showToast('Admin access granted', 'success', `Signed in as ${result.adminId}`);
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : 'Invalid Admin ID or Password.';
-      setLoginError(msg);
-      showToast('Access denied', 'error', msg);
+      await signInWithGoogle();
     } finally {
-      setLoggingIn(false);
+      setSigningIn(false);
     }
   };
 
   const handleLogout = async () => {
-    await logoutAdmin();
-    setAuthenticatedAdminId(null);
-    setAdminIdInput('');
-    setPasswordInput('');
-    setVpnEntries([]);
-    setCountries([]);
-    setRedeemCodes([]);
-    setRequests([]);
-    showToast('Signed out from Admin Panel', 'info');
+    await signOutUser();
   };
 
   const handleCopy = async (text: string, key: string, label: string) => {
@@ -289,6 +262,7 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
 
   const handleInlineAddRedeem = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!user) return;
     const trimmedCode = newRedeemCode.trim();
     if (!/^[a-zA-Z0-9_-]{2,64}$/.test(trimmedCode)) {
       showToast(
@@ -312,7 +286,7 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
     setAddingRedeem(true);
     try {
       const roundedBalance = Math.round(parsedBalance * 100) / 100;
-      await createAdminRedeemCode({
+      await createAdminRedeemCode(user.uid, {
         code: trimmedCode,
         balance: roundedBalance,
         status: newRedeemStatus,
@@ -323,7 +297,6 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
       setNewRedeemStatus('Active');
       setNewRedeemExpiry('');
       showToast('Redeem code added', 'success', `${trimmedCode} · ₹${roundedBalance}`);
-      await loadAllAdminData();
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Unable to add redeem code.';
       showToast('Failed to add code', 'error', msg);
@@ -346,6 +319,7 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
 
   const handleInlineAddIpCode = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!user) return;
     const trimmedCode = newIpCode.trim();
     if (!/^[a-zA-Z0-9_.:/-]{1,64}$/.test(trimmedCode)) {
       showToast(
@@ -358,7 +332,7 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
 
     setAddingIpCode(true);
     try {
-      await createAdminIpCode({
+      await createAdminIpCode(user.uid, {
         code: trimmedCode,
         label: newIpCodeLabel.trim(),
         status: newIpCodeStatus,
@@ -367,7 +341,6 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
       setNewIpCodeLabel('');
       setNewIpCodeStatus('Active');
       showToast('IP Code added', 'success', trimmedCode);
-      await loadAllAdminData();
     } catch (err) {
       const msg = err instanceof Error ? err.message : 'Unable to add IP Code.';
       showToast('Failed to add IP Code', 'error', msg);
@@ -396,26 +369,26 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
     if (!editingVpnEntry) return null;
     return {
       ...editingVpnEntry,
-      createdBy: authenticatedAdminId ?? 'admin',
+      createdBy: user?.uid ?? 'admin',
       createdAt: null,
       updatedAt: null,
     };
-  }, [editingVpnEntry, authenticatedAdminId]);
+  }, [editingVpnEntry, user]);
 
-  // --- Auth Loading Gate ---
-  if (sessionChecking) {
+  // --- Firebase Auth Loading Gate ---
+  if (authLoading || adminCheckLoading) {
     return (
       <main className="mx-auto flex min-h-[calc(100vh-8rem)] w-full max-w-lg items-center justify-center px-4 py-16">
         <div className="flex w-full flex-col items-center rounded-3xl border border-violet-500/20 bg-[#0A0812] p-10 text-center">
           <Loader2 className="h-7 w-7 animate-spin text-violet-400" aria-hidden="true" />
-          <p className="mt-4 text-sm text-slate-300">Verifying admin session...</p>
+          <p className="mt-4 text-sm text-slate-300">Verifying administrator session...</p>
         </div>
       </main>
     );
   }
 
-  // --- Admin Login Screen ---
-  if (!authenticatedAdminId) {
+  // --- Firebase Authentication Login Screen (zero hardcoded credentials) ---
+  if (!user) {
     return (
       <main className="relative flex min-h-[calc(100vh-8rem)] w-full items-center justify-center overflow-hidden px-4 py-12">
         <div
@@ -435,103 +408,30 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
               IndoXDPro Admin
             </h1>
             <p className="mt-1.5 text-sm text-slate-400">
-              Authorized administrator credentials required.
+              Sign in with your authorized Google administrator account to manage Firestore records.
             </p>
           </div>
 
-          <form onSubmit={handleLoginSubmit} className="space-y-4" noValidate>
-            {loginError && (
-              <div
-                role="alert"
-                className="flex items-center gap-2.5 rounded-2xl border border-rose-500/35 bg-rose-950/35 px-4 py-3 text-xs text-rose-200"
-              >
-                <ShieldAlert className="h-4 w-4 shrink-0 text-rose-400" aria-hidden="true" />
-                <span>{loginError}</span>
-              </div>
-            )}
-
-            <div>
-              <label
-                htmlFor="admin-login-id"
-                className="mb-2 block text-xs font-semibold tracking-wider text-violet-200/80"
-              >
-                Admin ID
-              </label>
-              <div className="portal-input-box flex min-h-[54px] items-center gap-3 rounded-2xl px-4">
-                <UserCheck className="h-5 w-5 shrink-0 text-violet-400/80" aria-hidden="true" />
-                <input
-                  id="admin-login-id"
-                  type="text"
-                  value={adminIdInput}
-                  disabled={loggingIn}
-                  onChange={(e) => {
-                    setAdminIdInput(e.target.value);
-                    setLoginError(null);
-                  }}
-                  placeholder="Enter Admin ID"
-                  autoComplete="username"
-                  className="h-full w-full bg-transparent py-3 font-mono text-sm text-white placeholder:font-sans placeholder:text-slate-500 focus:outline-none"
-                />
-              </div>
-            </div>
-
-            <div>
-              <label
-                htmlFor="admin-login-password"
-                className="mb-2 block text-xs font-semibold tracking-wider text-violet-200/80"
-              >
-                Admin Password
-              </label>
-              <div className="portal-input-box flex min-h-[54px] items-center gap-3 rounded-2xl px-4">
-                <KeyRound className="h-5 w-5 shrink-0 text-violet-400/80" aria-hidden="true" />
-                <input
-                  id="admin-login-password"
-                  type={showPassword ? 'text' : 'password'}
-                  value={passwordInput}
-                  disabled={loggingIn}
-                  onChange={(e) => {
-                    setPasswordInput(e.target.value);
-                    setLoginError(null);
-                  }}
-                  placeholder="Enter Admin Password"
-                  autoComplete="current-password"
-                  className="h-full w-full bg-transparent py-3 font-mono text-sm text-white placeholder:font-sans placeholder:text-slate-500 focus:outline-none"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword((prev) => !prev)}
-                  aria-label={showPassword ? 'Hide password' : 'Show password'}
-                  className="rounded-lg p-1.5 text-slate-400 transition-colors hover:bg-white/10 hover:text-white"
-                >
-                  {showPassword ? (
-                    <EyeOff className="h-4 w-4" aria-hidden="true" />
-                  ) : (
-                    <Eye className="h-4 w-4" aria-hidden="true" />
-                  )}
-                </button>
-              </div>
-            </div>
-
-            <div className="pt-2">
-              <button
-                type="submit"
-                disabled={loggingIn}
-                className="btn-purple-glow flex min-h-[54px] w-full items-center justify-center gap-2.5 rounded-2xl px-6 text-sm font-bold tracking-wide text-white disabled:opacity-70"
-              >
-                {loggingIn ? (
-                  <>
-                    <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-                    <span>VERIFYING...</span>
-                  </>
-                ) : (
-                  <>
-                    <ShieldCheck className="h-4 w-4" aria-hidden="true" />
-                    <span>ACCESS ADMIN PANEL</span>
-                  </>
-                )}
-              </button>
-            </div>
-          </form>
+          <div className="space-y-4">
+            <button
+              type="button"
+              disabled={signingIn}
+              onClick={() => void handleGoogleSignIn()}
+              className="btn-purple-glow flex min-h-[54px] w-full items-center justify-center gap-2.5 rounded-2xl px-6 text-sm font-bold tracking-wide text-white disabled:opacity-70"
+            >
+              {signingIn ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                  <span>AUTHENTICATING...</span>
+                </>
+              ) : (
+                <>
+                  <ShieldCheck className="h-4 w-4" aria-hidden="true" />
+                  <span>SIGN IN WITH GOOGLE</span>
+                </>
+              )}
+            </button>
+          </div>
 
           <div className="mt-5 text-center">
             <button
@@ -540,6 +440,56 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
               className="text-xs text-slate-400 transition-colors hover:text-white"
             >
               Return to IndoXDPro Portal
+            </button>
+          </div>
+        </section>
+      </main>
+    );
+  }
+
+  // --- Signed In But Not Authorized as Admin ---
+  if (!isAdmin) {
+    return (
+      <main className="relative flex min-h-[calc(100vh-8rem)] w-full items-center justify-center overflow-hidden px-4 py-12">
+        <section
+          aria-label="Administrator Authorization Required"
+          className="relative w-full max-w-[460px] rounded-3xl border border-rose-500/25 bg-[#0A0812]/95 p-6 text-center shadow-[0_24px_80px_rgba(0,0,0,0.85)] sm:p-8"
+        >
+          <div className="mx-auto mb-3.5 flex h-12 w-12 items-center justify-center rounded-2xl border border-rose-500/35 bg-rose-500/15 text-rose-400">
+            <ShieldAlert className="h-6 w-6" aria-hidden="true" />
+          </div>
+          <h1 className="font-display text-xl font-bold text-white">Access Denied</h1>
+          <p className="mt-2 text-sm text-slate-400">
+            The signed-in account does not have administrator permissions in Firestore Security
+            Rules.
+          </p>
+
+          <div className="mt-4 rounded-xl border border-white/[0.08] bg-[#050409] p-3.5 text-left text-xs">
+            <div className="flex items-center justify-between gap-2 text-slate-400">
+              <span>Account</span>
+              <span className="font-mono text-slate-200">{user.email ?? 'Unknown'}</span>
+            </div>
+            <div className="mt-1.5 flex items-center justify-between gap-2 text-slate-400">
+              <span>UID</span>
+              <span className="truncate font-mono text-slate-300">{user.uid}</span>
+            </div>
+          </div>
+
+          <div className="mt-6 flex flex-col gap-2.5 sm:flex-row">
+            <button
+              type="button"
+              onClick={() => void handleLogout()}
+              className="inline-flex min-h-[42px] flex-1 items-center justify-center gap-2 rounded-xl border border-rose-500/25 bg-rose-500/10 px-4 text-sm font-medium text-rose-200 hover:bg-rose-500/20"
+            >
+              <LogOut className="h-4 w-4" aria-hidden="true" />
+              <span>Sign Out</span>
+            </button>
+            <button
+              type="button"
+              onClick={onBackToDashboard}
+              className="inline-flex min-h-[42px] flex-1 items-center justify-center rounded-xl border border-white/12 bg-white/[0.04] px-4 text-sm font-medium text-slate-200 hover:bg-white/[0.08]"
+            >
+              Back to Portal
             </button>
           </div>
         </section>
@@ -558,7 +508,8 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
               <ShieldCheck className="h-4 w-4" aria-hidden="true" />
               <span>IndoXDPro Admin</span>
               <span aria-hidden="true">·</span>
-              <span className="font-mono text-slate-300">{authenticatedAdminId}</span>
+              <span className="font-mono text-slate-300">{user.email ?? user.uid}</span>
+              {loadingData && <Loader2 className="h-3.5 w-3.5 animate-spin text-violet-400" />}
             </div>
             <h1 className="mt-1.5 font-display text-2xl font-bold tracking-tight text-white sm:text-3xl">
               VPN Portal Management
@@ -618,19 +569,6 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
                 <span>Add Redeem Code</span>
               </button>
             )}
-
-            <button
-              type="button"
-              onClick={() => void loadAllAdminData()}
-              disabled={loadingData}
-              className="inline-flex min-h-[42px] items-center gap-2 rounded-xl border border-white/12 bg-white/[0.04] px-3.5 text-sm font-medium text-slate-300 hover:bg-white/[0.08] hover:text-white"
-            >
-              <RefreshCw
-                className={`h-4 w-4 ${loadingData ? 'animate-spin' : ''}`}
-                aria-hidden="true"
-              />
-              <span>Refresh</span>
-            </button>
 
             <button
               type="button"
@@ -880,12 +818,7 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
                             onClick={async () => {
                               setTogglingId(entry.id);
                               try {
-                                const next = await toggleAdminVpnEntryStatus(entry.id);
-                                setVpnEntries((prev) =>
-                                  prev.map((item) =>
-                                    item.id === entry.id ? { ...item, status: next } : item
-                                  )
-                                );
+                                const next = await toggleAdminVpnEntryStatus(entry.id, entry.status);
                                 showToast(`VPN entry marked ${next}`, 'success');
                               } finally {
                                 setTogglingId(null);
@@ -989,11 +922,6 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
                             keywords: country.keywords,
                             isActive: !country.isActive,
                           });
-                          setCountries((prev) =>
-                            prev.map((c) =>
-                              c.id === country.id ? { ...c, isActive: !country.isActive } : c
-                            )
-                          );
                           showToast(
                             `${country.name} ${!country.isActive ? 'activated' : 'hidden'}`,
                             'success'
@@ -1240,12 +1168,7 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
                           <button
                             type="button"
                             onClick={async () => {
-                              const next = await toggleAdminRedeemCodeStatus(rc.id);
-                              setRedeemCodes((prev) =>
-                                prev.map((item) =>
-                                  item.id === rc.id ? { ...item, status: next } : item
-                                )
-                              );
+                              const next = await toggleAdminRedeemCodeStatus(rc.id, rc.status);
                               showToast(`Redeem code marked ${next}`, 'success');
                             }}
                             className={`inline-flex min-h-[30px] items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium ${
@@ -1481,12 +1404,7 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
                         <button
                           type="button"
                           onClick={async () => {
-                            const next = await toggleAdminIpCodeStatus(ic.id);
-                            setIpCodes((prev) =>
-                              prev.map((item) =>
-                                item.id === ic.id ? { ...item, status: next } : item
-                              )
-                            );
+                            const next = await toggleAdminIpCodeStatus(ic.id, ic.status);
                             showToast(`IP Code marked ${next}`, 'success');
                           }}
                           className={`inline-flex min-h-[30px] items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium ${
@@ -1641,13 +1559,12 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
         }}
         onSubmit={async (input: VpnServerInput) => {
           if (editingVpnEntry) {
-            await updateAdminVpnEntry(editingVpnEntry.id, input);
+            await updateAdminVpnEntry(user.uid, editingVpnEntry.id, input);
             showToast('VPN entry updated', 'success', `${input.countryName} · ${input.ipAddress}`);
           } else {
-            await createAdminVpnEntry(input);
+            await createAdminVpnEntry(user.uid, input);
             showToast('VPN entry added', 'success', `${input.countryName} · ${input.ipAddress}`);
           }
-          await loadAllAdminData();
         }}
       />
 
@@ -1671,10 +1588,9 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
             await updateAdminCountry(editingCountry.id, input);
             showToast('Country updated', 'success', input.name);
           } else {
-            await createAdminCountry(input);
+            await createAdminCountry(user.uid, input);
             showToast('Country added', 'success', input.name);
           }
-          await loadAllAdminData();
         }}
       />
 
@@ -1688,13 +1604,12 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
         }}
         onSave={async (input) => {
           if (editingIpCode) {
-            await updateAdminIpCode(editingIpCode.id, input);
+            await updateAdminIpCode(user.uid, editingIpCode.id, input);
             showToast('IP Code updated', 'success', input.code);
           } else {
-            await createAdminIpCode(input);
+            await createAdminIpCode(user.uid, input);
             showToast('IP Code added', 'success', input.code);
           }
-          await loadAllAdminData();
         }}
       />
 
@@ -1708,13 +1623,12 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
         }}
         onSave={async (input) => {
           if (editingRedeem) {
-            await updateAdminRedeemCode(editingRedeem.id, input);
+            await updateAdminRedeemCode(user.uid, editingRedeem.id, input);
             showToast('Redeem code updated', 'success', input.code);
           } else {
-            await createAdminRedeemCode(input);
+            await createAdminRedeemCode(user.uid, input);
             showToast('Redeem code added', 'success', input.code);
           }
-          await loadAllAdminData();
         }}
       />
 
@@ -1732,7 +1646,7 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
                   ? 'Delete Redeem Code'
                   : 'Delete Request Log'
         }
-        description="This action permanently deletes the selected record from the server database."
+        description="This action permanently deletes the selected record from Cloud Firestore."
         itemLabel={deleteTarget?.label ?? ''}
         onCancel={() => setDeleteTarget(null)}
         onConfirm={async () => {
@@ -1749,7 +1663,6 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
             await deleteAdminRequest(deleteTarget.id);
           }
           showToast('Entry deleted', 'info', deleteTarget.label);
-          await loadAllAdminData();
         }}
       />
     </main>

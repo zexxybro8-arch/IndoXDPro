@@ -1,22 +1,22 @@
-# Security Specification — VPN Management Platform
+# Security Specification — IndoXDPro VPN Portal (Pure Firebase Architecture)
 
 ## 1. Data Invariants
-1. **Admin-Exclusive Write Authority**: Only verified administrators (`isAdmin()`, defined as verified email `zexxybro8@gmail.com` or an existing UID in `/admins/{uid}`) may create, update, or delete `/vpn_servers/{serverId}` or `/admins/{adminUid}` documents.
-2. **Strict Schema & Size Enforcement**: Every `/vpn_servers/{serverId}` write must pass `isValidVpnServer(incoming())` checking exact required keys (`hasAll`), no shadow keys (`hasOnly`), string type checks, regex patterns (`countryCode`, `ipAddress`, `ipCode`), and strict byte/length caps (`flagDataUrl.size() <= 120000`, `notes.size() <= 500`, etc.).
-3. **Immutable Provenance & Temporal Integrity**: `createdBy` must equal `request.auth.uid` on create and remain immutable on update. `createdAt` must equal `request.time` on create and remain immutable on update. `updatedAt` must equal `request.time` on both create and update.
-4. **Path ID Poisoning Protection**: All single-document operations (`get`, `create`, `update`, `delete`) validate `isValidId(id)` (`^[a-zA-Z0-9_-]+$`, `<= 128` chars).
-5. **PII Isolation on Admin Registry**: `/admins/{adminUid}` contains admin email addresses; `list` is restricted strictly to `isAdmin()`, and `get` is restricted to the matching UID (`request.auth.uid == adminUid`) or `isAdmin()`.
+1. **Admin-Exclusive Configuration Authority**: Only verified administrators (`isAdmin()`, defined as verified email `zexxybro8@gmail.com` or an existing UID in `/admins/{uid}`) may create, update, or delete `/countries`, `/vpn_servers`, `/ip_codes`, `/redeem_codes` (admin fields), and `/admins` documents, or read/delete `/connection_requests` and private `/vpn_servers` records.
+2. **Private Code Database Protection (Anti-Scraping)**: `/ip_codes` and `/redeem_codes` strictly deny `allow list` to non-admins (`allow list: if isVerifiedUser() && isAdmin()`). Ordinary users can only perform exact-ID `get` lookups for a single code they enter. `/vpn_servers` denies both `get` and `list` to non-admins so optional `username` and `password` credentials remain completely private.
+3. **Server-Enforced Redemption Integrity**: Ordinary users cannot modify `balance`, `code`, `codeId`, `status`, `expiryDate`, `expiresAt`, `createdBy`, or `createdAt` on `/redeem_codes`. During a VPN connection `runTransaction`, non-admin updates on `/redeem_codes/{codeId}` are restricted strictly to `affectedKeys().hasOnly(['redemptionStatus', 'redeemedAt', 'updatedAt'])` and ONLY when `existing().status == 'Active'`, `existing().redemptionStatus == 'Unused'`, `incoming().redemptionStatus == 'Redeemed'` (terminal lock), `incoming().updatedAt == request.time`, and the expiry timestamp has not passed.
+4. **Atomic Transaction Enforcement (`get` + `getAfter`)**: Creating a `'Connected'` log in `/connection_requests/{requestId}` requires Firestore Security Rules to verify atomically that the referenced `/ip_codes/{ipCodeId}` is `'Active'`, the referenced `/redeem_codes/{redeemCodeId}` transitions to `'Redeemed'` via `getAfter(...)`, and `incoming().balance` matches the authoritative database balance.
+5. **Path ID Poisoning & Payload Size Guards**: All single-document operations enforce `isValidId(id)` (`^[a-zA-Z0-9_-]+$`, `1..128` chars), strict `hasAll`/`hasOnly` key allowlists, explicit types, regex checks, and bounded string sizes.
 
 ## 2. The "Dirty Dozen" Attack Payloads
-1. **Unauthenticated VPN Creation**: Anonymous client attempts `create` on `/vpn_servers/srv1` -> `PERMISSION_DENIED`.
-2. **Non-Admin Signed-In User Creation**: Authenticated standard user (`email_verified: true`, non-admin email) attempts `create` on `/vpn_servers/srv1` -> `PERMISSION_DENIED`.
-3. **Unverified Admin Email Spoof**: Authenticated user with `email: "zexxybro8@gmail.com"` and `email_verified: false` attempts `create` on `/vpn_servers/srv1` -> `PERMISSION_DENIED`.
-4. **Shadow Field Injection**: Admin attempts `create` on `/vpn_servers/srv1` with extra field `isFeatured: true` -> `PERMISSION_DENIED`.
-5. **ID Poisoning Attack**: Admin attempts `create` on `/vpn_servers/bad$id..with.chars` -> `PERMISSION_DENIED`.
-6. **Denial-of-Wallet Oversized Notes**: Admin attempts `create` with `notes` string of 2,000 characters (`> 500`) -> `PERMISSION_DENIED`.
-7. **Invalid Status Injection**: Admin attempts `update` setting `status: "Pending"` (not in `['Active', 'Inactive']`) -> `PERMISSION_DENIED`.
-8. **Backdated Timestamp Spoofing**: Admin attempts `create` with client-supplied `createdAt` not equal to `request.time` -> `PERMISSION_DENIED`.
-9. **Immutable Field Tampering**: Admin attempts `update` modifying `createdAt` or `createdBy` -> `PERMISSION_DENIED`.
-10. **Non-Admin Status Toggle**: Standard signed-in user attempts `update` changing `status` on `/vpn_servers/srv1` -> `PERMISSION_DENIED`.
-11. **PII Scraping on `/admins`**: Non-admin user attempts `list` on `/admins` or `get` on `/admins/otherUid` -> `PERMISSION_DENIED`.
-12. **Privilege Self-Escalation**: Non-admin user attempts `create` on `/admins/{ownUid}` to promote themselves -> `PERMISSION_DENIED`.
+1. **Unauthenticated VPN Server Creation**: Anonymous client attempts `create` on `/vpn_servers/srv1` -> `PERMISSION_DENIED`.
+2. **Public Scraping of Private Codes**: Anonymous or non-admin user attempts `list` on `/redeem_codes` or `/ip_codes` -> `PERMISSION_DENIED`.
+3. **Private VPN Credential Scraping**: Anonymous or non-admin user attempts `get` or `list` on `/vpn_servers` -> `PERMISSION_DENIED`.
+4. **Unverified Admin Email Spoof**: Signed-in user with `email: "zexxybro8@gmail.com"` and `email_verified: false` attempts admin write -> `PERMISSION_DENIED`.
+5. **Balance Tampering During Redemption**: User attempts `update` on `/redeem_codes/rdm_test` changing `balance` alongside `redemptionStatus` -> `PERMISSION_DENIED`.
+6. **Re-activating or Un-redeeming a Used Code**: User attempts `update` on a `'Redeemed'` `/redeem_codes/rdm_test` back to `'Unused'` -> `PERMISSION_DENIED`.
+7. **Redeeming an Inactive or Expired Code**: User attempts `update` on an `'Inactive'` or expired `/redeem_codes/rdm_test` -> `PERMISSION_DENIED`.
+8. **Fake Connected Audit Log Without Valid IP Code**: User attempts `create` on `/connection_requests/req1` with `resultStatus: "Connected"` and nonexistent or `'Inactive'` `ipCodeId` -> `PERMISSION_DENIED`.
+9. **Shadow Field Injection**: Admin or user attempts `create` or `update` adding an unexpected field like `isSuperAdmin: true` -> `PERMISSION_DENIED`.
+10. **ID Poisoning Attack**: Client attempts `create` on `/ip_codes/bad$id..chars` or >128-char ID -> `PERMISSION_DENIED`.
+11. **Backdated Timestamp Spoofing**: Client attempts `create` or `update` with `createdAt` or `updatedAt` != `request.time` -> `PERMISSION_DENIED`.
+12. **Privilege Self-Escalation / PII Scraping on `/admins`**: Non-admin user attempts `list` on `/admins` or `create` on `/admins/{ownUid}` -> `PERMISSION_DENIED`.
