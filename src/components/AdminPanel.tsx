@@ -36,6 +36,8 @@ import {
   deleteAdminRedeemCode,
   deleteAdminRequest,
   deleteAdminVpnEntry,
+  getLocalIsoDate,
+  isValidExpiryDate,
   saveAdminIdMapping,
   seedCountriesIfEmpty,
   subscribeAdminCountries,
@@ -153,7 +155,7 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
 
   // Attach real-time Firestore listeners only after verified admin authentication
   useEffect(() => {
-    if (!user || !isAdmin) {
+    if (!isAdmin) {
       setVpnEntries([]);
       setCountries([]);
       setIpCodes([]);
@@ -172,34 +174,59 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
         setLoadingData(false);
       }
     };
+    const handleSubError = (label: string) => (err: Error) => {
+      markReady();
+      showToast(`${label} sync error`, 'error', err.message);
+    };
 
-    void seedCountriesIfEmpty(user?.uid ?? 'admin').catch(() => {
-      // Handled via Firestore error boundary if unauthorized
+    void seedCountriesIfEmpty(user?.uid ?? 'admin').catch((err) => {
+      const msg = err instanceof Error ? err.message : 'Unable to seed countries.';
+      showToast('Country initialization failed', 'error', msg);
     });
 
-    const unsubVpn = subscribeAdminVpnEntries((list) => {
-      setVpnEntries(list);
-      markReady();
-    });
-    const unsubCountries = subscribeAdminCountries((list) => {
-      setCountries(list);
-      markReady();
-    });
-    const unsubIpCodes = subscribeAdminIpCodes((list) => {
-      setIpCodes(list);
-      markReady();
-    });
-    const unsubRedeem = subscribeAdminRedeemCodes((list) => {
-      setRedeemCodes(list);
-      markReady();
-    });
-    const unsubRequests = subscribeAdminRequests((list) => {
-      setRequests(list);
-      markReady();
-    });
-    const unsubAdminIds = subscribeAdminIdMappings((list) => {
-      setAdminIdMappings(list);
-    });
+    const unsubVpn = subscribeAdminVpnEntries(
+      (list) => {
+        setVpnEntries(list);
+        markReady();
+      },
+      handleSubError('VPN entries')
+    );
+    const unsubCountries = subscribeAdminCountries(
+      (list) => {
+        setCountries(list);
+        markReady();
+      },
+      handleSubError('Countries')
+    );
+    const unsubIpCodes = subscribeAdminIpCodes(
+      (list) => {
+        setIpCodes(list);
+        markReady();
+      },
+      handleSubError('IP codes')
+    );
+    const unsubRedeem = subscribeAdminRedeemCodes(
+      (list) => {
+        setRedeemCodes(list);
+        markReady();
+      },
+      handleSubError('Redeem codes')
+    );
+    const unsubRequests = subscribeAdminRequests(
+      (list) => {
+        setRequests(list);
+        markReady();
+      },
+      handleSubError('Connection requests')
+    );
+    const unsubAdminIds = subscribeAdminIdMappings(
+      (list) => {
+        setAdminIdMappings(list);
+      },
+      (err) => {
+        showToast('Admin IDs sync error', 'error', err.message);
+      }
+    );
 
     return () => {
       unsubVpn();
@@ -209,7 +236,7 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
       unsubRequests();
       unsubAdminIds();
     };
-  }, [user, isAdmin]);
+  }, [isAdmin, user, showToast]);
 
   const handleAdminLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -303,7 +330,7 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
 
   const handleInlineAddRedeem = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user) return;
+    if (!isAdmin) return;
     const trimmedCode = newRedeemCode.trim();
     if (!/^[a-zA-Z0-9_-]{2,64}$/.test(trimmedCode)) {
       showToast(
@@ -321,6 +348,11 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
       parsedBalance < 0
     ) {
       showToast('Invalid Balance', 'error', 'Enter a valid non-negative ₹ balance amount.');
+      return;
+    }
+
+    if (!isValidExpiryDate(newRedeemExpiry.trim())) {
+      showToast('Invalid Expiry Date', 'error', 'Use a valid YYYY-MM-DD date or leave empty.');
       return;
     }
 
@@ -360,7 +392,7 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
 
   const handleInlineAddIpCode = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user) return;
+    if (!isAdmin) return;
     const trimmedCode = newIpCode.trim();
     if (!/^[a-zA-Z0-9_.:/-]{1,64}$/.test(trimmedCode)) {
       showToast(
@@ -893,6 +925,9 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
                               try {
                                 const next = await toggleAdminVpnEntryStatus(entry.id, entry.status);
                                 showToast(`VPN entry marked ${next}`, 'success');
+                              } catch (err) {
+                                const msg = err instanceof Error ? err.message : 'Unable to update status.';
+                                showToast('Status update failed', 'error', msg);
                               } finally {
                                 setTogglingId(null);
                               }
@@ -986,27 +1021,39 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
                     <td className="px-4 py-3">
                       <button
                         type="button"
+                        disabled={togglingId === country.id}
                         onClick={async () => {
-                          await updateAdminCountry(country.id, {
-                            name: country.name,
-                            code: country.code,
-                            flagMode: country.flagMode,
-                            flagDataUrl: country.flagDataUrl,
-                            keywords: country.keywords,
-                            isActive: !country.isActive,
-                          });
-                          showToast(
-                            `${country.name} ${!country.isActive ? 'activated' : 'hidden'}`,
-                            'success'
-                          );
+                          setTogglingId(country.id);
+                          try {
+                            await updateAdminCountry(country.id, {
+                              name: country.name,
+                              code: country.code,
+                              flagMode: country.flagMode,
+                              flagDataUrl: country.flagDataUrl,
+                              keywords: country.keywords,
+                              isActive: !country.isActive,
+                            });
+                            showToast(
+                              `${country.name} ${!country.isActive ? 'activated' : 'hidden'}`,
+                              'success'
+                            );
+                          } catch (err) {
+                            const msg = err instanceof Error ? err.message : 'Unable to update country.';
+                            showToast('Country update failed', 'error', msg);
+                          } finally {
+                            setTogglingId(null);
+                          }
                         }}
-                        className={`inline-flex min-h-[30px] items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium ${
+                        className={`inline-flex min-h-[30px] items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium disabled:opacity-60 ${
                           country.isActive
                             ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300'
                             : 'border-white/12 bg-white/[0.04] text-slate-400'
                         }`}
                       >
-                        {country.isActive ? 'Active' : 'Hidden'}
+                        {togglingId === country.id && (
+                          <Loader2 className="h-3 w-3 animate-spin" />
+                        )}
+                        <span>{country.isActive ? 'Active' : 'Hidden'}</span>
                       </button>
                     </td>
                     <td className="px-5 py-3 text-right">
@@ -1143,12 +1190,24 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
               </div>
 
               <div>
-                <label
-                  htmlFor="inline-rdm-expiry"
-                  className="block text-xs font-medium text-slate-300"
-                >
-                  Expiry Date <span className="text-slate-500">(optional)</span>
-                </label>
+                <div className="flex items-center justify-between">
+                  <label
+                    htmlFor="inline-rdm-expiry"
+                    className="block text-xs font-medium text-slate-300"
+                  >
+                    Expiry Date <span className="text-slate-500">(optional)</span>
+                  </label>
+                  {newRedeemExpiry && (
+                    <button
+                      type="button"
+                      disabled={addingRedeem}
+                      onClick={() => setNewRedeemExpiry('')}
+                      className="text-[11px] font-medium text-violet-300 hover:text-white"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </div>
                 <input
                   id="inline-rdm-expiry"
                   type="date"
@@ -1204,7 +1263,7 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
                 </thead>
                 <tbody className="divide-y divide-white/[0.06]">
                   {filteredRedeemCodes.map((rc) => {
-                    const todayIso = new Date().toISOString().slice(0, 10);
+                    const todayIso = getLocalIsoDate();
                     const isExpired = Boolean(rc.expiryDate && rc.expiryDate < todayIso);
                     const formattedBalance = Number.isInteger(rc.balance)
                       ? rc.balance.toLocaleString('en-IN')
@@ -1240,17 +1299,29 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
                         <td className="px-4 py-3.5">
                           <button
                             type="button"
+                            disabled={togglingId === rc.id}
                             onClick={async () => {
-                              const next = await toggleAdminRedeemCodeStatus(rc.id, rc.status);
-                              showToast(`Redeem code marked ${next}`, 'success');
+                              setTogglingId(rc.id);
+                              try {
+                                const next = await toggleAdminRedeemCodeStatus(rc.id, rc.status);
+                                showToast(`Redeem code marked ${next}`, 'success');
+                              } catch (err) {
+                                const msg = err instanceof Error ? err.message : 'Unable to update redeem code.';
+                                showToast('Status update failed', 'error', msg);
+                              } finally {
+                                setTogglingId(null);
+                              }
                             }}
-                            className={`inline-flex min-h-[30px] items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium ${
+                            className={`inline-flex min-h-[30px] items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium disabled:opacity-60 ${
                               rc.status === 'Active'
                                 ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20'
                                 : 'border-white/12 bg-white/[0.04] text-slate-300 hover:bg-white/[0.08]'
                             }`}
                           >
-                            {rc.status}
+                            {togglingId === rc.id && (
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                            )}
+                            <span>{rc.status}</span>
                           </button>
                         </td>
                         <td className="px-4 py-3.5 text-xs font-medium">
@@ -1476,17 +1547,29 @@ export function AdminPanel({ onBackToDashboard }: AdminPanelProps) {
                       <td className="px-4 py-3.5">
                         <button
                           type="button"
+                          disabled={togglingId === ic.id}
                           onClick={async () => {
-                            const next = await toggleAdminIpCodeStatus(ic.id, ic.status);
-                            showToast(`IP Code marked ${next}`, 'success');
+                            setTogglingId(ic.id);
+                            try {
+                              const next = await toggleAdminIpCodeStatus(ic.id, ic.status);
+                              showToast(`IP Code marked ${next}`, 'success');
+                            } catch (err) {
+                              const msg = err instanceof Error ? err.message : 'Unable to update IP Code.';
+                              showToast('Status update failed', 'error', msg);
+                            } finally {
+                              setTogglingId(null);
+                            }
                           }}
-                          className={`inline-flex min-h-[30px] items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium ${
+                          className={`inline-flex min-h-[30px] items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium disabled:opacity-60 ${
                             ic.status === 'Active'
                               ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20'
                               : 'border-white/12 bg-white/[0.04] text-slate-300 hover:bg-white/[0.08]'
                           }`}
                         >
-                          {ic.status}
+                          {togglingId === ic.id && (
+                            <Loader2 className="h-3 w-3 animate-spin" />
+                          )}
+                          <span>{ic.status}</span>
                         </button>
                       </td>
                       <td className="px-4 py-3.5 font-mono text-xs text-slate-400 tabular-nums">

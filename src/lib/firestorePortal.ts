@@ -4,6 +4,7 @@ import {
   deleteDoc,
   doc,
   getDoc,
+  getDocFromServer,
   getDocs,
   limit,
   onSnapshot,
@@ -89,8 +90,12 @@ export function toRedeemCodeDocId(code: string): string {
   return `rdm_${code.trim().toLowerCase()}`;
 }
 
-function getTodayIsoDate(): string {
-  return new Date().toISOString().slice(0, 10);
+export function getLocalIsoDate(): string {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth() + 1).padStart(2, '0');
+  const d = String(now.getDate()).padStart(2, '0');
+  return `${y}-${m}-${d}`;
 }
 
 export function isValidExpiryDate(value: string): boolean {
@@ -104,17 +109,16 @@ function expiryDateToTimestamp(expiryDate: string): Timestamp {
   if (!expiryDate) {
     return Timestamp.fromDate(new Date('2999-12-31T23:59:59.999Z'));
   }
-  return Timestamp.fromDate(new Date(`${expiryDate}T23:59:59.999Z`));
+  const [y, m, d] = expiryDate.split('-').map(Number);
+  return Timestamp.fromDate(new Date(y, m - 1, d, 23, 59, 59, 999));
 }
 
-function isRedeemExpired(expiryDate: string, expiresAt?: unknown): boolean {
-  if (expiryDate && expiryDate < getTodayIsoDate()) {
-    return true;
+function isRedeemExpired(expiryDate: string): boolean {
+  const trimmed = expiryDate.trim();
+  if (!trimmed) {
+    return false;
   }
-  if (expiresAt instanceof Timestamp && expiresAt.toMillis() < Date.now()) {
-    return true;
-  }
-  return false;
+  return trimmed < getLocalIsoDate();
 }
 
 function timestampToIso(value: unknown): string {
@@ -190,7 +194,8 @@ export function subscribePortalCountries(
 }
 
 export function subscribeAdminCountries(
-  onData: (countries: ManagedCountry[]) => void
+  onData: (countries: ManagedCountry[]) => void,
+  onError?: (error: Error) => void
 ): () => void {
   const path = 'countries';
   const q = query(collection(db, path), where('isActive', 'in', [true, false]));
@@ -231,17 +236,23 @@ export function subscribeAdminCountries(
       onData(list);
     },
     (error) => {
+      if (onError) {
+        onError(error);
+        return;
+      }
       handleFirestoreError(error, OperationType.LIST, path);
     }
   );
 }
 
 export function subscribeAdminVpnEntries(
-  onData: (entries: ManagedVpnEntry[]) => void
+  onData: (entries: ManagedVpnEntry[]) => void,
+  onError?: (error: Error) => void
 ): () => void {
   const path = 'vpn_servers';
+  const q = query(collection(db, path), where('status', 'in', ['Active', 'Inactive']));
   return onSnapshot(
-    collection(db, path),
+    q,
     (snapshot) => {
       const list: ManagedVpnEntry[] = snapshot.docs
         .map((docSnap) => {
@@ -266,15 +277,23 @@ export function subscribeAdminVpnEntries(
       onData(list);
     },
     (error) => {
+      if (onError) {
+        onError(error);
+        return;
+      }
       handleFirestoreError(error, OperationType.LIST, path);
     }
   );
 }
 
-export function subscribeAdminIpCodes(onData: (ipCodes: IpCodeEntry[]) => void): () => void {
+export function subscribeAdminIpCodes(
+  onData: (ipCodes: IpCodeEntry[]) => void,
+  onError?: (error: Error) => void
+): () => void {
   const path = 'ip_codes';
+  const q = query(collection(db, path), where('status', 'in', ['Active', 'Inactive']));
   return onSnapshot(
-    collection(db, path),
+    q,
     (snapshot) => {
       const list: IpCodeEntry[] = snapshot.docs
         .map((docSnap) => {
@@ -292,17 +311,23 @@ export function subscribeAdminIpCodes(onData: (ipCodes: IpCodeEntry[]) => void):
       onData(list);
     },
     (error) => {
+      if (onError) {
+        onError(error);
+        return;
+      }
       handleFirestoreError(error, OperationType.LIST, path);
     }
   );
 }
 
 export function subscribeAdminRedeemCodes(
-  onData: (redeemCodes: RedeemCodeEntry[]) => void
+  onData: (redeemCodes: RedeemCodeEntry[]) => void,
+  onError?: (error: Error) => void
 ): () => void {
   const path = 'redeem_codes';
+  const q = query(collection(db, path), where('status', 'in', ['Active', 'Inactive']));
   return onSnapshot(
-    collection(db, path),
+    q,
     (snapshot) => {
       const list: RedeemCodeEntry[] = snapshot.docs
         .map((docSnap) => {
@@ -328,17 +353,23 @@ export function subscribeAdminRedeemCodes(
       onData(list);
     },
     (error) => {
+      if (onError) {
+        onError(error);
+        return;
+      }
       handleFirestoreError(error, OperationType.LIST, path);
     }
   );
 }
 
 export function subscribeAdminRequests(
-  onData: (requests: ConnectionRequestLog[]) => void
+  onData: (requests: ConnectionRequestLog[]) => void,
+  onError?: (error: Error) => void
 ): () => void {
   const path = 'connection_requests';
+  const q = query(collection(db, path), where('resultStatus', 'in', ['Connected', 'Rejected']));
   return onSnapshot(
-    collection(db, path),
+    q,
     (snapshot) => {
       const list: ConnectionRequestLog[] = snapshot.docs
         .map((docSnap) => {
@@ -362,6 +393,10 @@ export function subscribeAdminRequests(
       onData(list);
     },
     (error) => {
+      if (onError) {
+        onError(error);
+        return;
+      }
       handleFirestoreError(error, OperationType.LIST, path);
     }
   );
@@ -375,6 +410,8 @@ async function findRedeemCodeDoc(rawCode: string) {
     new Set(
       [
         toRedeemCodeDocId(trimmed),
+        `rdm_${trimmed}`,
+        `rdm_${trimmed.toUpperCase()}`,
         trimmed,
         trimmed.toLowerCase(),
         trimmed.toUpperCase(),
@@ -383,7 +420,7 @@ async function findRedeemCodeDoc(rawCode: string) {
   );
 
   for (const docId of candidates) {
-    const snap = await getDoc(doc(db, 'redeem_codes', docId));
+    const snap = await getDocFromServer(doc(db, 'redeem_codes', docId));
     if (snap.exists()) {
       return snap;
     }
@@ -393,18 +430,109 @@ async function findRedeemCodeDoc(rawCode: string) {
 
 async function findIpCodeDoc(rawCode: string) {
   const trimmed = rawCode.trim();
-  const candidates = [toIpCodeDocId(trimmed)];
-  if (/^[a-zA-Z0-9_-]{1,128}$/.test(trimmed)) {
-    candidates.push(trimmed);
-  }
+  const candidates = Array.from(
+    new Set(
+      [
+        toIpCodeDocId(trimmed),
+        `ipc_${utf8ToBase64Url(trimmed)}`,
+        `ipc_${utf8ToBase64Url(trimmed.toUpperCase())}`,
+        trimmed,
+        trimmed.toLowerCase(),
+        trimmed.toUpperCase(),
+      ].filter((id) => /^[a-zA-Z0-9_-]{1,128}$/.test(id))
+    )
+  );
 
-  for (const docId of Array.from(new Set(candidates))) {
-    const snap = await getDoc(doc(db, 'ip_codes', docId));
+  for (const docId of candidates) {
+    const snap = await getDocFromServer(doc(db, 'ip_codes', docId));
     if (snap.exists()) {
       return snap;
     }
   }
   return null;
+}
+
+function evaluateRedeemSnapshot(
+  docId: string,
+  data: Record<string, unknown> | undefined,
+  fallbackCode: string
+): RedeemVerificationResult {
+  if (!data) {
+    return {
+      valid: false,
+      error: 'Not Verified',
+      reason: 'This redeem code does not exist.',
+    };
+  }
+
+  const status: ServerStatus = data.status === 'Inactive' ? 'Inactive' : 'Active';
+  const expiryDate = String(data.expiryDate ?? '');
+  const redemptionStatus: RedemptionStatus =
+    data.redemptionStatus === 'Redeemed' ? 'Redeemed' : 'Unused';
+
+  if (status !== 'Active') {
+    return {
+      valid: false,
+      error: 'Not Verified',
+      reason: 'This redeem code is currently inactive.',
+    };
+  }
+
+  if (isRedeemExpired(expiryDate)) {
+    return {
+      valid: false,
+      error: 'Not Verified',
+      reason: `This redeem code expired on ${expiryDate}.`,
+    };
+  }
+
+  if (redemptionStatus === 'Redeemed') {
+    return {
+      valid: false,
+      error: 'Not Verified',
+      reason: 'This redeem code has already been redeemed.',
+    };
+  }
+
+  return {
+    valid: true,
+    docId,
+    code: String(data.code ?? fallbackCode),
+    balance: Number(data.balance ?? 0),
+    status,
+    expiryDate,
+    redemptionStatus,
+  };
+}
+
+function evaluateIpCodeSnapshot(
+  docId: string,
+  data: Record<string, unknown> | undefined,
+  fallbackCode: string
+): IpCodeVerificationResult {
+  if (!data) {
+    return {
+      valid: false,
+      error: 'Not Verified',
+      reason: 'IP Code is not registered by administrator.',
+    };
+  }
+
+  const status: ServerStatus = data.status === 'Inactive' ? 'Inactive' : 'Active';
+  if (status !== 'Active') {
+    return {
+      valid: false,
+      error: 'Not Verified',
+      reason: 'This IP Code is currently inactive.',
+    };
+  }
+
+  return {
+    valid: true,
+    docId,
+    code: String(data.code ?? fallbackCode),
+    status,
+  };
 }
 
 export async function verifyPortalRedeemCode(
@@ -414,7 +542,7 @@ export async function verifyPortalRedeemCode(
   if (!trimmed || !REDEEM_CODE_REGEX.test(trimmed)) {
     return {
       valid: false,
-      error: 'INVALID REDEEM CODE',
+      error: 'Not Verified',
       reason: 'Enter a valid redeem code (2–64 characters).',
     };
   }
@@ -424,50 +552,12 @@ export async function verifyPortalRedeemCode(
     if (!snap) {
       return {
         valid: false,
-        error: 'INVALID REDEEM CODE',
+        error: 'Not Verified',
         reason: 'This redeem code does not exist.',
       };
     }
 
-    const data = snap.data();
-    const status: ServerStatus = data.status === 'Inactive' ? 'Inactive' : 'Active';
-    const expiryDate = String(data.expiryDate ?? '');
-    const redemptionStatus: RedemptionStatus =
-      data.redemptionStatus === 'Redeemed' ? 'Redeemed' : 'Unused';
-
-    if (status !== 'Active') {
-      return {
-        valid: false,
-        error: 'INVALID REDEEM CODE',
-        reason: 'This redeem code is currently inactive.',
-      };
-    }
-
-    if (isRedeemExpired(expiryDate, data.expiresAt)) {
-      return {
-        valid: false,
-        error: 'INVALID REDEEM CODE',
-        reason: `This redeem code expired on ${expiryDate || 'cutoff date'}.`,
-      };
-    }
-
-    if (redemptionStatus === 'Redeemed') {
-      return {
-        valid: false,
-        error: 'INVALID REDEEM CODE',
-        reason: 'This redeem code has already been redeemed.',
-      };
-    }
-
-    return {
-      valid: true,
-      docId: snap.id,
-      code: String(data.code ?? trimmed),
-      balance: Number(data.balance ?? 0),
-      status,
-      expiryDate,
-      redemptionStatus,
-    };
+    return evaluateRedeemSnapshot(snap.id, snap.data(), trimmed);
   } catch (error) {
     handleFirestoreError(error, OperationType.GET, 'redeem_codes');
   }
@@ -495,25 +585,64 @@ export async function verifyPortalIpCode(
       };
     }
 
-    const data = snap.data();
-    const status: ServerStatus = data.status === 'Inactive' ? 'Inactive' : 'Active';
-    if (status !== 'Active') {
-      return {
-        valid: false,
-        error: 'Not Verified',
-        reason: 'This IP Code is currently inactive.',
-      };
-    }
-
-    return {
-      valid: true,
-      docId: snap.id,
-      code: String(data.code ?? trimmed),
-      status,
-    };
+    return evaluateIpCodeSnapshot(snap.id, snap.data(), trimmed);
   } catch (error) {
     handleFirestoreError(error, OperationType.GET, 'ip_codes');
   }
+}
+
+export function subscribePortalRedeemCodeById(
+  docId: string,
+  fallbackCode: string,
+  onResult: (result: RedeemVerificationResult) => void,
+  onError: (error: Error) => void
+): () => void {
+  const path = `redeem_codes/${docId}`;
+  return onSnapshot(
+    doc(db, 'redeem_codes', docId),
+    (snap) => {
+      if (!snap.exists()) {
+        onResult({
+          valid: false,
+          error: 'Not Verified',
+          reason: 'This redeem code does not exist.',
+        });
+        return;
+      }
+      onResult(evaluateRedeemSnapshot(snap.id, snap.data(), fallbackCode));
+    },
+    (error) => {
+      console.error('Firestore Error:', JSON.stringify({ error: error.message, path }));
+      onError(error);
+    }
+  );
+}
+
+export function subscribePortalIpCodeById(
+  docId: string,
+  fallbackCode: string,
+  onResult: (result: IpCodeVerificationResult) => void,
+  onError: (error: Error) => void
+): () => void {
+  const path = `ip_codes/${docId}`;
+  return onSnapshot(
+    doc(db, 'ip_codes', docId),
+    (snap) => {
+      if (!snap.exists()) {
+        onResult({
+          valid: false,
+          error: 'Not Verified',
+          reason: 'IP Code is not registered by administrator.',
+        });
+        return;
+      }
+      onResult(evaluateIpCodeSnapshot(snap.id, snap.data(), fallbackCode));
+    },
+    (error) => {
+      console.error('Firestore Error:', JSON.stringify({ error: error.message, path }));
+      onError(error);
+    }
+  );
 }
 
 // --- Atomic Firestore Transaction for Portal Connection & Redemption ---
@@ -616,9 +745,9 @@ export async function submitPortalConnection(payload: {
         throw new Error('INVALID REDEEM CODE — This redeem code is inactive.');
       }
       const expiryDate = String(rdmData.expiryDate ?? '');
-      if (isRedeemExpired(expiryDate, rdmData.expiresAt)) {
+      if (isRedeemExpired(expiryDate)) {
         throw new Error(
-          `INVALID REDEEM CODE — Expired on ${expiryDate || 'cutoff date'}.`
+          `INVALID REDEEM CODE — Expired on ${expiryDate}.`
         );
       }
       if (rdmData.redemptionStatus === 'Redeemed') {
@@ -939,8 +1068,8 @@ export async function createAdminIpCode(
   const docRef = doc(db, 'ip_codes', codeId);
 
   try {
-    const existing = await getDoc(docRef);
-    if (existing.exists()) {
+    const existing = await findIpCodeDoc(code);
+    if (existing) {
       throw new Error('This IP Code already exists.');
     }
 
@@ -1077,8 +1206,8 @@ export async function createAdminRedeemCode(
   const docRef = doc(db, 'redeem_codes', codeId);
 
   try {
-    const existing = await getDoc(docRef);
-    if (existing.exists()) {
+    const existing = await findRedeemCodeDoc(code);
+    if (existing) {
       throw new Error('This Redeem Code already exists.');
     }
 
@@ -1392,11 +1521,13 @@ export async function ensureAdminProfileInFirestore(
 }
 
 export function subscribeAdminIdMappings(
-  onData: (mappings: AdminIdMappingEntry[]) => void
+  onData: (mappings: AdminIdMappingEntry[]) => void,
+  onError?: (error: Error) => void
 ): () => void {
   const path = 'admin_ids';
+  const q = query(collection(db, path), where('isActive', 'in', [true, false]));
   return onSnapshot(
-    collection(db, path),
+    q,
     (snapshot) => {
       const list: AdminIdMappingEntry[] = snapshot.docs
         .map((docSnap) => {
@@ -1417,6 +1548,10 @@ export function subscribeAdminIdMappings(
       onData(list);
     },
     (error) => {
+      if (onError) {
+        onError(error);
+        return;
+      }
       handleFirestoreError(error, OperationType.LIST, path);
     }
   );

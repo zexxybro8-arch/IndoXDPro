@@ -10,6 +10,7 @@ import {
   X,
 } from 'lucide-react';
 import { COUNTRY_OPTIONS } from '../lib/countries';
+import { isValidExpiryDate } from '../lib/firestorePortal';
 import { processFlagUpload } from '../lib/validation';
 import {
   AdminIdMappingEntry,
@@ -421,6 +422,11 @@ export function RedeemCodeModal({
       return;
     }
 
+    if (!isValidExpiryDate(expiryDate.trim())) {
+      setError('Expiry Date must be empty or a valid YYYY-MM-DD date.');
+      return;
+    }
+
     setSaving(true);
     try {
       await onSave({
@@ -525,9 +531,20 @@ export function RedeemCodeModal({
             </div>
 
             <div>
-              <label htmlFor="rdm-expiry" className="block text-xs font-medium text-slate-300">
-                Expiry Date <span className="text-slate-500">(optional)</span>
-              </label>
+              <div className="flex items-center justify-between">
+                <label htmlFor="rdm-expiry" className="block text-xs font-medium text-slate-300">
+                  Expiry Date <span className="text-slate-500">(optional)</span>
+                </label>
+                {expiryDate && (
+                  <button
+                    type="button"
+                    onClick={() => setExpiryDate('')}
+                    className="text-[11px] font-medium text-violet-300 hover:text-white"
+                  >
+                    Clear
+                  </button>
+                )}
+              </div>
               <input
                 id="rdm-expiry"
                 type="date"

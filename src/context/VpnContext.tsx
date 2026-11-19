@@ -10,8 +10,10 @@ import {
   doc,
   getDoc,
   onSnapshot,
+  query,
   serverTimestamp,
   setDoc,
+  where,
 } from 'firebase/firestore';
 import {
   OperationType,
@@ -120,7 +122,7 @@ export function VpnProvider({ children }: { children: React.ReactNode }) {
     }
 
     const unsubscribe = onSnapshot(
-      collection(db, 'admins'),
+      query(collection(db, 'admins'), where('uid', '>=', '')),
       (snapshot) => {
         const list: AdminRecord[] = snapshot.docs.map((d) => {
           const data = d.data();

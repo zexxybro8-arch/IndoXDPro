@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { motion } from 'motion/react';
 import {
+  AlertCircle,
   Check,
   CheckCircle2,
   KeyRound,
@@ -15,6 +16,8 @@ import {
 import { useVpn } from '../context/VpnContext';
 import {
   submitPortalConnection,
+  subscribePortalIpCodeById,
+  subscribePortalRedeemCodeById,
   verifyPortalIpCode,
   verifyPortalRedeemCode,
 } from '../lib/firestorePortal';
@@ -24,14 +27,16 @@ import { CountrySelect, SelectableCountry } from './CountrySelect';
 type RedeemVerifyState =
   | { status: 'idle' }
   | { status: 'checking' }
-  | { status: 'valid'; code: string; balance: number }
-  | { status: 'invalid'; error: string; reason?: string };
+  | { status: 'valid'; docId?: string; code: string; balance: number }
+  | { status: 'invalid'; error: string; reason?: string }
+  | { status: 'error'; reason: string };
 
 type IpCodeVerifyState =
   | { status: 'idle' }
   | { status: 'checking' }
-  | { status: 'valid'; code: string }
-  | { status: 'invalid'; reason?: string };
+  | { status: 'valid'; docId?: string; code: string }
+  | { status: 'invalid'; reason?: string }
+  | { status: 'error'; reason: string };
 
 function formatInr(amount: number): string {
   return Number.isInteger(amount)
@@ -93,6 +98,7 @@ export function VpnPortal() {
       if (res.valid) {
         setRedeemVerify({
           status: 'valid',
+          docId: res.docId,
           code: res.code ?? trimmed,
           balance: Number(res.balance ?? 0),
         });
@@ -100,16 +106,18 @@ export function VpnPortal() {
       } else {
         setRedeemVerify({
           status: 'invalid',
-          error: res.error || 'INVALID REDEEM CODE',
+          error: res.error || 'Not Verified',
           reason: res.reason,
         });
       }
-    } catch {
+    } catch (err) {
       if (seq !== verifySeqRef.current) return;
+      const msg = err instanceof Error ? err.message : 'Unable to reach database.';
       setRedeemVerify({
-        status: 'invalid',
-        error: 'INVALID REDEEM CODE',
-        reason: 'Unable to verify redeem code.',
+        status: 'error',
+        reason: msg.startsWith('Database read error')
+          ? msg
+          : 'Database connection error while verifying redeem code. Please try again.',
       });
     }
   };
@@ -138,6 +146,48 @@ export function VpnPortal() {
     };
   }, [redeemCode]);
 
+  // Real-time Firestore listener for verified Redeem Code balance/status updates
+  const verifiedRedeemDocId = redeemVerify.status === 'valid' ? redeemVerify.docId : undefined;
+  const verifiedRedeemCode = redeemVerify.status === 'valid' ? redeemVerify.code : '';
+  useEffect(() => {
+    if (!verifiedRedeemDocId || connecting) return;
+
+    const unsubscribe = subscribePortalRedeemCodeById(
+      verifiedRedeemDocId,
+      verifiedRedeemCode,
+      (res) => {
+        if (res.valid) {
+          setRedeemVerify((prev) => {
+            if (prev.status !== 'valid' || prev.docId !== verifiedRedeemDocId) return prev;
+            const nextBalance = Number(res.balance ?? 0);
+            const nextCode = res.code ?? prev.code;
+            if (prev.balance === nextBalance && prev.code === nextCode) return prev;
+            return {
+              status: 'valid',
+              docId: verifiedRedeemDocId,
+              code: nextCode,
+              balance: nextBalance,
+            };
+          });
+        } else {
+          setRedeemVerify({
+            status: 'invalid',
+            error: res.error || 'Not Verified',
+            reason: res.reason,
+          });
+        }
+      },
+      () => {
+        setRedeemVerify({
+          status: 'error',
+          reason: 'Database connection error while syncing redeem code.',
+        });
+      }
+    );
+
+    return () => unsubscribe();
+  }, [verifiedRedeemDocId, verifiedRedeemCode, connecting]);
+
   const runIpCodeVerification = async (rawCode: string) => {
     const trimmed = rawCode.trim();
     if (!trimmed) {
@@ -156,6 +206,7 @@ export function VpnPortal() {
       if (res.valid) {
         setIpCodeVerify({
           status: 'valid',
+          docId: res.docId,
           code: res.code ?? trimmed,
         });
         setErrors((prev) => ({ ...prev, ipCode: undefined }));
@@ -165,11 +216,14 @@ export function VpnPortal() {
           reason: res.reason,
         });
       }
-    } catch {
+    } catch (err) {
       if (seq !== ipVerifySeqRef.current) return;
+      const msg = err instanceof Error ? err.message : 'Unable to reach database.';
       setIpCodeVerify({
-        status: 'invalid',
-        reason: 'Unable to verify IP Code.',
+        status: 'error',
+        reason: msg.startsWith('Database read error')
+          ? msg
+          : 'Database connection error while verifying IP Code. Please try again.',
       });
     }
   };
@@ -191,6 +245,45 @@ export function VpnPortal() {
       window.clearTimeout(timer);
     };
   }, [ipCode]);
+
+  // Real-time Firestore listener for verified IP Code status updates
+  const verifiedIpDocId = ipCodeVerify.status === 'valid' ? ipCodeVerify.docId : undefined;
+  const verifiedIpCode = ipCodeVerify.status === 'valid' ? ipCodeVerify.code : '';
+  useEffect(() => {
+    if (!verifiedIpDocId || connecting) return;
+
+    const unsubscribe = subscribePortalIpCodeById(
+      verifiedIpDocId,
+      verifiedIpCode,
+      (res) => {
+        if (res.valid) {
+          setIpCodeVerify((prev) => {
+            if (prev.status !== 'valid' || prev.docId !== verifiedIpDocId) return prev;
+            const nextCode = res.code ?? prev.code;
+            if (prev.code === nextCode) return prev;
+            return {
+              status: 'valid',
+              docId: verifiedIpDocId,
+              code: nextCode,
+            };
+          });
+        } else {
+          setIpCodeVerify({
+            status: 'invalid',
+            reason: res.reason,
+          });
+        }
+      },
+      () => {
+        setIpCodeVerify({
+          status: 'error',
+          reason: 'Database connection error while syncing IP Code.',
+        });
+      }
+    );
+
+    return () => unsubscribe();
+  }, [verifiedIpDocId, verifiedIpCode, connecting]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -217,12 +310,79 @@ export function VpnPortal() {
     setErrors({});
     setConnecting(true);
 
+    const cleanIp = ipAddress.trim();
+    const cleanRedeem = redeemCode.trim();
+    const cleanCode = ipCode.trim();
+    const countryName = selectedCountry?.name ?? '';
+    const countryCode = selectedCountry?.code || countryName.slice(0, 2).toUpperCase();
+
     try {
-      const cleanIp = ipAddress.trim();
-      const cleanRedeem = redeemCode.trim();
-      const cleanCode = ipCode.trim();
-      const countryName = selectedCountry?.name ?? '';
-      const countryCode = selectedCountry?.code || countryName.slice(0, 2).toUpperCase();
+      // Explicitly recheck both Redeem Code and IP Code against Firestore on CONNECT VPN
+      verifySeqRef.current += 1;
+      ipVerifySeqRef.current += 1;
+
+      const [rdmOutcome, ipOutcome] = await Promise.allSettled([
+        verifyPortalRedeemCode(cleanRedeem),
+        verifyPortalIpCode(cleanCode),
+      ]);
+
+      let hasReadError = false;
+
+      if (rdmOutcome.status === 'fulfilled') {
+        const res = rdmOutcome.value;
+        if (res.valid) {
+          setRedeemVerify({
+            status: 'valid',
+            docId: res.docId,
+            code: res.code ?? cleanRedeem,
+            balance: Number(res.balance ?? 0),
+          });
+        } else {
+          setRedeemVerify({
+            status: 'invalid',
+            error: res.error || 'Not Verified',
+            reason: res.reason,
+          });
+        }
+      } else {
+        hasReadError = true;
+        setRedeemVerify({
+          status: 'error',
+          reason: 'Database connection error while verifying redeem code. Please try again.',
+        });
+      }
+
+      if (ipOutcome.status === 'fulfilled') {
+        const res = ipOutcome.value;
+        if (res.valid) {
+          setIpCodeVerify({
+            status: 'valid',
+            docId: res.docId,
+            code: res.code ?? cleanCode,
+          });
+        } else {
+          setIpCodeVerify({
+            status: 'invalid',
+            reason: res.reason,
+          });
+        }
+      } else {
+        hasReadError = true;
+        setIpCodeVerify({
+          status: 'error',
+          reason: 'Database connection error while verifying IP Code. Please try again.',
+        });
+      }
+
+      if (hasReadError) {
+        setConnectedEndpoint(null);
+        showToast(
+          'Database connection error',
+          'error',
+          'Could not verify codes with Firestore. Please check your connection and try again.'
+        );
+        return;
+      }
 
       // Atomically verify IP Code & Redeem Code and redeem via Firestore transaction
       const connection = await submitPortalConnection({
@@ -259,7 +419,7 @@ export function VpnPortal() {
       ) {
         setRedeemVerify({
           status: 'invalid',
-          error: 'INVALID REDEEM CODE',
+          error: 'Not Verified',
           reason: message === 'INVALID REDEEM CODE' ? undefined : message,
         });
       }
@@ -424,13 +584,31 @@ export function VpnPortal() {
                     <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-rose-500 text-[#050409]">
                       <X className="h-2.5 w-2.5 stroke-[3]" aria-hidden="true" />
                     </span>
-                    <span>Invalid</span>
+                    <span>Not Verified</span>
+                  </span>
+                )}
+
+                {redeemVerify.status === 'error' && (
+                  <span
+                    role="alert"
+                    className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap text-xs font-semibold text-amber-400 sm:text-[13px]"
+                  >
+                    <AlertCircle className="h-4 w-4 shrink-0" aria-hidden="true" />
+                    <span>DB Error</span>
                   </span>
                 )}
               </div>
 
               {errors.redeemCode && (
                 <p className="mt-1.5 text-xs text-rose-400">{errors.redeemCode}</p>
+              )}
+
+              {!errors.redeemCode && redeemVerify.status === 'invalid' && redeemVerify.reason && (
+                <p className="mt-1.5 text-xs text-rose-400">{redeemVerify.reason}</p>
+              )}
+
+              {redeemVerify.status === 'error' && (
+                <p className="mt-1.5 text-xs text-amber-400">{redeemVerify.reason}</p>
               )}
 
               {redeemVerify.status === 'valid' && (
@@ -519,9 +697,25 @@ export function VpnPortal() {
                     <span>Not Verified</span>
                   </motion.span>
                 )}
+
+                {ipCodeVerify.status === 'error' && (
+                  <span
+                    role="alert"
+                    className="inline-flex shrink-0 items-center gap-1.5 whitespace-nowrap text-xs font-semibold text-amber-400 sm:text-[13px]"
+                  >
+                    <AlertCircle className="h-4 w-4 shrink-0" aria-hidden="true" />
+                    <span>DB Error</span>
+                  </span>
+                )}
               </div>
               {errors.ipCode && (
                 <p className="mt-1.5 text-xs text-rose-400">{errors.ipCode}</p>
+              )}
+              {!errors.ipCode && ipCodeVerify.status === 'invalid' && ipCodeVerify.reason && (
+                <p className="mt-1.5 text-xs text-rose-400">{ipCodeVerify.reason}</p>
+              )}
+              {ipCodeVerify.status === 'error' && (
+                <p className="mt-1.5 text-xs text-amber-400">{ipCodeVerify.reason}</p>
               )}
             </div>
 
